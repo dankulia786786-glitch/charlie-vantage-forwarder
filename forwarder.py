@@ -224,7 +224,6 @@ def get_live_data_from_twelve_data(symbol, interval):
         )
 
         data = response.json()
-
         values = data.get("values", [])
 
         if not values:
@@ -483,7 +482,6 @@ def display_asset(asset_name):
 def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
     above_50 = price > ema50
     above_200 = price > ema200
-
     near_upper_band = price >= bb_upper * 0.998
     near_lower_band = price <= bb_lower * 1.002
 
@@ -493,7 +491,8 @@ def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
             "trade_word": "buys",
             "opposite_word": "sells",
             "key_level": ema50,
-            "tone": "buyers are still holding control"
+            "position_phrase": "while price holds above the main EMA zone",
+            "shift_phrase": "if price loses that EMA zone cleanly"
         }
 
     if not above_50 and not above_200 and rsi <= 50:
@@ -502,25 +501,28 @@ def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
             "trade_word": "sells",
             "opposite_word": "buys",
             "key_level": ema50,
-            "tone": "sellers are still keeping pressure on the chart"
+            "position_phrase": "while price stays below the main EMA zone",
+            "shift_phrase": "if price breaks back above that EMA zone cleanly"
         }
 
     if near_upper_band and rsi >= 60:
         return {
-            "bias": "bullish but stretched",
+            "bias": "bullish but slightly stretched",
             "trade_word": "buys on pullbacks",
             "opposite_word": "sells",
             "key_level": ema50,
-            "tone": "buyers have momentum, but price is getting close to the upper Bollinger Band"
+            "position_phrase": "while momentum remains strong but not overextended",
+            "shift_phrase": "if price starts rejecting the upper Bollinger Band"
         }
 
     if near_lower_band and rsi <= 40:
         return {
-            "bias": "bearish but stretched",
+            "bias": "bearish but slightly stretched",
             "trade_word": "sells on pullbacks",
             "opposite_word": "buys",
             "key_level": ema50,
-            "tone": "sellers have pressure, but price is getting close to the lower Bollinger Band"
+            "position_phrase": "while sellers keep pressure near the lower band",
+            "shift_phrase": "if price starts bouncing strongly from the lower Bollinger Band"
         }
 
     if price >= ema50:
@@ -529,7 +531,8 @@ def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
             "trade_word": "buys",
             "opposite_word": "sells",
             "key_level": max(ema50, ema200),
-            "tone": "buyers are trying to build momentum"
+            "position_phrase": "while price holds above the short term EMA area",
+            "shift_phrase": "if price fails to hold above that short term support"
         }
 
     return {
@@ -537,7 +540,8 @@ def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
         "trade_word": "sells",
         "opposite_word": "buys",
         "key_level": max(ema50, ema200),
-        "tone": "sellers still have the cleaner side for now"
+        "position_phrase": "while price remains below the short term EMA area",
+        "shift_phrase": "if price reclaims that level with strength"
     }
 
 
@@ -564,42 +568,37 @@ def generate_market_message(asset_name, data, interval):
     bias = details["bias"]
     trade_word = details["trade_word"]
     opposite_word = details["opposite_word"]
-    key_level = details["key_level"]
-    key_level_text = level_format(asset_name, key_level)
-    tone = details["tone"]
+    key_level_text = level_format(asset_name, details["key_level"])
+    position_phrase = details["position_phrase"]
+    shift_phrase = details["shift_phrase"]
 
     line1_options = [
         f"✅ {name} is trading around {price_text} on the {visible_interval} timeframe, and the current view is leaning {bias}.",
-        f"✅ On the {visible_interval} chart, {name} is sitting near {price_text}, with price still deciding its next clean direction.",
-        f"✅ {name} is around {price_text} on the {visible_interval} timeframe, and the structure is giving a {bias} feel for now.",
-        f"✅ Looking at the {visible_interval} chart, {name} is reacting around {price_text}, so this area is important.",
-        f"✅ {name} is moving close to {price_text} on the {visible_interval}, and we need confirmation before forcing a trade.",
-        f"✅ The {visible_interval} picture on {name} is still developing, with price currently around {price_text}."
+        f"✅ Looking at the {visible_interval} chart, {name} is reacting around {price_text}, so this zone matters right now.",
+        f"✅ {name} is sitting near {price_text} on the {visible_interval} timeframe, with the market still building its next move.",
+        f"✅ The {visible_interval} picture on {name} is still developing, with price currently around {price_text}.",
+        f"✅ {name} is moving close to {price_text} on the {visible_interval}, and confirmation is still important before forcing a trade."
     ]
 
     line2_options = [
-        f"✅ EMA 50 is near {ema50_text} and EMA 200 is near {ema200_text}, so {tone}.",
-        f"✅ RSI is around {rsi}, which tells us momentum is not too stretched and the next clean break matters.",
-        f"✅ Bollinger Bands are showing a range between {bb_lower_text} and {bb_upper_text}, so I’m watching for a reaction near those areas.",
-        f"✅ Price is around the Bollinger midline near {bb_middle_text}, which means the market still needs a stronger push.",
-        f"✅ The EMA zone between {ema50_text} and {ema200_text} is the main area guiding the next move.",
-        f"✅ RSI near {rsi} and the EMA structure both suggest we should wait for clean confirmation."
+        f"✅ EMA 50 is near {ema50_text} and EMA 200 is near {ema200_text}, which gives a cleaner view of the current structure.",
+        f"✅ RSI is around {rsi}, so momentum is not too stretched and the next clean break matters.",
+        f"✅ Bollinger Bands are sitting between {bb_lower_text} and {bb_upper_text}, so I’m watching for reactions near those areas.",
+        f"✅ Price is close to the Bollinger midline near {bb_middle_text}, which usually means the market still needs a stronger push.",
+        f"✅ The EMA area around {ema50_text} and {ema200_text} is the key zone I’m watching for direction.",
+        f"✅ RSI near {rsi} with price around the EMA zone tells me this still needs clean confirmation."
     ]
 
     line3_options = [
-        f"✅ For now, {trade_word} make more sense while price stays under pressure, but I would change view if {name} breaks {key_level_text} cleanly.",
-        f"✅ Bias stays with {trade_word} for now, but if {name} clears {key_level_text}, {opposite_word} can start looking better.",
-        f"✅ I would be more comfortable looking for {trade_word} unless price gives a strong break through {key_level_text}.",
-        f"✅ At the moment, {trade_word} still look cleaner, but confirmation is important before forcing any entry.",
-        f"✅ If {name} rejects this area again, {trade_word} can stay in play, but a clean break changes the picture.",
-        f"✅ Overall, I would keep the focus on {trade_word} while watching {key_level_text} as the level that can shift momentum."
+        f"✅ For now, {trade_word} make more sense {position_phrase}, but I would change view {shift_phrase}.",
+        f"✅ Bias stays with {trade_word} for now, with {key_level_text} acting as the level that can shift momentum.",
+        f"✅ I would be more comfortable looking for {trade_word}, but only with confirmation around these levels.",
+        f"✅ At the moment, {trade_word} still look cleaner, while {opposite_word} need a stronger break before looking attractive.",
+        f"✅ If {name} respects this area again, {trade_word} can stay in play, but a clean break changes the picture.",
+        f"✅ Overall, I would keep focus on {trade_word} for now, while watching {key_level_text} as the level that can change the bias."
     ]
 
-    line1 = random.choice(line1_options)
-    line2 = random.choice(line2_options)
-    line3 = random.choice(line3_options)
-
-    return f"**🔔 Market Update**\n\n{line1}\n\n{line2}\n\n{line3}"
+    return f"**🔔 Market Update**\n\n{random.choice(line1_options)}\n\n{random.choice(line2_options)}\n\n{random.choice(line3_options)}"
 
 
 def choose_asset():

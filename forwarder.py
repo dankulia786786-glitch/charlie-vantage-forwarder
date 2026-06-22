@@ -463,33 +463,49 @@ def display_asset(asset_name):
     return mapping.get(asset_name, asset_name.upper())
 
 
-def rsi_comment(asset_name, rsi, price, ema50, ema200):
-    if rsi >= 70:
-        if asset_name == "gold":
-            return f"RSI is near {rsi}, so Gold is looking stretched and I would not chase it too high without a clean pullback."
+def bias_details(asset_name, price, ema50, ema200, rsi):
+    above_50 = price > ema50
+    above_200 = price > ema200
 
-        return f"RSI is near {rsi}, so momentum is strong but the move is getting a little stretched."
+    if above_50 and above_200:
+        return {
+            "bias": "bullish",
+            "trade_word": "buys",
+            "opposite_word": "sells",
+            "key_level": ema50,
+            "tone": "buyers are still showing control"
+        }
 
-    if rsi <= 30:
-        if asset_name == "gold":
-            return f"RSI is near {rsi}, so sellers have control but Gold is getting close to a reaction area."
+    if not above_50 and not above_200:
+        return {
+            "bias": "bearish",
+            "trade_word": "sells",
+            "opposite_word": "buys",
+            "key_level": ema50,
+            "tone": "sellers still have control"
+        }
 
-        return f"RSI is near {rsi}, so sellers are still in control but the move is getting slightly stretched."
+    if price >= ema50:
+        return {
+            "bias": "mixed but slightly bullish",
+            "trade_word": "buys",
+            "opposite_word": "sells",
+            "key_level": max(ema50, ema200),
+            "tone": "buyers are trying to build momentum"
+        }
 
-    if 45 <= rsi <= 55:
-        return f"RSI is near {rsi}, so momentum is balanced and the next clean break matters more."
-
-    if price > ema50 and price > ema200:
-        return f"RSI is near {rsi}, so buyers still have control, but we need to see if momentum can keep building."
-
-    if price < ema50 and price < ema200:
-        return f"RSI is near {rsi}, so sellers still have control, but price may start reacting around the next support."
-
-    return f"RSI is near {rsi}, so momentum is still mixed and the chart needs a cleaner move."
+    return {
+        "bias": "mixed but slightly bearish",
+        "trade_word": "sells",
+        "opposite_word": "buys",
+        "key_level": max(ema50, ema200),
+        "tone": "sellers are still keeping pressure on the chart"
+    }
 
 
 def generate_market_message(asset_name, data, interval):
     name = display_asset(asset_name)
+
     price = data["price"]
     rsi = data["rsi"]
     ema50 = data["ema"]
@@ -500,27 +516,46 @@ def generate_market_message(asset_name, data, interval):
     ema200_text = level_format(asset_name, ema200)
     visible_interval = chart_interval(interval)
 
-    above_50 = price > ema50
-    above_200 = price > ema200
+    details = bias_details(asset_name, price, ema50, ema200, rsi)
+    bias = details["bias"]
+    trade_word = details["trade_word"]
+    opposite_word = details["opposite_word"]
+    key_level = details["key_level"]
+    key_level_text = level_format(asset_name, key_level)
+    tone = details["tone"]
 
-    if above_50 and above_200:
-        line1 = f"{name} is trading around {price_text} on the {visible_interval} chart, holding above the EMA 50 at {ema50_text} and EMA 200 at {ema200_text}."
-        line2 = rsi_comment(asset_name, rsi, price, ema50, ema200)
-        line3 = f"If {name} keeps holding above {ema50_text}, the next push higher can stay active."
+    line1_options = [
+        f"✅ {name} is around {price_text} on the {visible_interval} chart, and the overall picture is still leaning {bias}.",
+        f"✅ {name} is trading near {price_text}, with price reacting around an important area on the {visible_interval} chart.",
+        f"✅ {name} is currently near {price_text}, and the market is showing a {bias} tone for now.",
+        f"✅ {name} is moving around {price_text} on the {visible_interval}, and the chart is not fully clean yet.",
+        f"✅ {name} is sitting around {price_text}, and we are still waiting for a stronger confirmation from this zone.",
+        f"✅ {name} is trading close to {price_text}, and the current structure is giving a {bias} feel."
+    ]
 
-    elif not above_50 and not above_200:
-        line1 = f"{name} is trading around {price_text} on the {visible_interval} chart, still sitting below the EMA 50 at {ema50_text} and EMA 200 at {ema200_text}."
-        line2 = rsi_comment(asset_name, rsi, price, ema50, ema200)
-        line3 = f"If {name} fails to reclaim {ema50_text}, the next move lower can stay active."
+    line2_options = [
+        f"✅ Price is around EMA 50 at {ema50_text} and EMA 200 at {ema200_text}, so {tone}.",
+        f"✅ The main levels I’m watching are {ema50_text} and {ema200_text}, because they are guiding the next direction.",
+        f"✅ As long as price respects the {key_level_text} area, the current bias can stay active.",
+        f"✅ The chart is still respecting the key EMA zone, so I would not rush against the current move yet.",
+        f"✅ RSI is near {rsi}, which shows the market is not too stretched and still has room for the next move.",
+        f"✅ Momentum is fairly balanced with RSI near {rsi}, so the next clean break is important."
+    ]
 
-    else:
-        line1 = f"{name} is trading around {price_text} on the {visible_interval} chart, sitting between the EMA 50 at {ema50_text} and EMA 200 at {ema200_text}."
-        line2 = rsi_comment(asset_name, rsi, price, ema50, ema200)
-        key_level = max(ema50, ema200)
-        key_level_text = level_format(asset_name, key_level)
-        line3 = f"If {name} clears {key_level_text}, buyers can take more control, but rejection keeps it choppy."
+    line3_options = [
+        f"✅ For now, {trade_word} make more sense while price stays around this structure, but I would change view if {name} breaks back through {key_level_text}.",
+        f"✅ Bias stays with {trade_word} for now, but if {name} clears {key_level_text} cleanly, {opposite_word} can start looking better.",
+        f"✅ I would be more comfortable looking for {trade_word} unless price gives a strong break above {key_level_text}.",
+        f"✅ At the moment, {trade_word} still look cleaner, but confirmation is important before forcing any entry.",
+        f"✅ If {name} rejects this area again, {trade_word} can stay in play, but a clean break changes the picture.",
+        f"✅ Overall, I would keep the focus on {trade_word} for now, while watching {key_level_text} as the level that can shift momentum."
+    ]
 
-    return f"**🔔 Market Update**\n\n{line1}\n{line2}\n{line3}"
+    line1 = random.choice(line1_options)
+    line2 = random.choice(line2_options)
+    line3 = random.choice(line3_options)
+
+    return f"**🔔 Market Update**\n\n{line1}\n\n{line2}\n\n{line3}"
 
 
 def choose_asset():
@@ -903,7 +938,7 @@ def test_message():
 
     message = data.get(
         "message",
-        "**🔔 Market Update**\n\nGold is trading around 4182.40 on the 15m chart, still sitting below the EMA 50 at 4191.20 and EMA 200 at 4204.80.\nRSI is near 38, so sellers still have control, but price is getting close to an area where buyers may try to react.\nIf Gold fails to reclaim 4191.20, the next move lower can stay active."
+        "**🔔 Market Update**\n\n✅ Gold is around 4182.40 on the 15m chart, and the overall picture is still leaning bearish.\n\n✅ RSI is near 38, so the market still has room for the next move.\n\n✅ For now, sells make more sense while Gold stays below the key level."
     )
 
     future = asyncio.run_coroutine_threadsafe(send_to_saved_messages(message), loop)

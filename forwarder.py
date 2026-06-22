@@ -6,6 +6,7 @@ import random
 import time
 import requests
 import io
+import statistics
 from flask import Flask, request, jsonify, Response
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -122,12 +123,31 @@ def calculate_rsi(values, period=14):
     return 100 - (100 / (1 + rs))
 
 
+def calculate_bollinger(values, period=20):
+    if not values or len(values) < period:
+        last_price = values[-1] if values else 0.0
+
+        return {
+            "bb_middle": last_price,
+            "bb_upper": last_price,
+            "bb_lower": last_price
+        }
+
+    recent = values[-period:]
+    middle = sum(recent) / period
+    stdev = statistics.pstdev(recent)
+
+    return {
+        "bb_middle": middle,
+        "bb_upper": middle + (2 * stdev),
+        "bb_lower": middle - (2 * stdev)
+    }
+
+
 def yahoo_symbol(symbol):
     mapping = {
         "XAU/USD": "GC=F",
         "BTC/USD": "BTC-USD",
-        "DXY": "DX-Y.NYB",
-        "GBP/USD": "GBPUSD=X",
     }
 
     return mapping.get(symbol, symbol)
@@ -138,11 +158,9 @@ def yahoo_interval(interval):
         "5min": "5m",
         "15min": "15m",
         "30min": "30m",
-        "45min": "30m",
         "1h": "1h",
         "4h": "1h",
         "1day": "1d",
-        "1week": "1wk",
     }
 
     return mapping.get(interval, "1h")
@@ -153,14 +171,98 @@ def chart_interval(interval):
         "5min": "5m",
         "15min": "15m",
         "30min": "30m",
-        "45min": "45m",
         "1h": "1h",
         "4h": "4h",
         "1day": "1D",
-        "1week": "1W",
     }
 
     return mapping.get(interval, "1h")
+
+
+def human_interval(interval):
+    mapping = {
+        "5min": "5M",
+        "15min": "15M",
+        "30min": "30M",
+        "1h": "1H",
+        "4h": "4H",
+        "1day": "Daily",
+    }
+
+    return mapping.get(interval, interval)
+
+
+def get_twelve_data_interval(interval):
+    mapping = {
+        "5min": "5min",
+        "15min": "15min",
+        "30min": "30min",
+        "1h": "1h",
+        "4h": "4h",
+        "1day": "1day",
+    }
+
+    return mapping.get(interval, "1h")
+
+
+def get_live_data_from_twelve_data(symbol, interval):
+    try:
+        if not TWELVE_DATA_KEY:
+            return None
+
+        td_interval = get_twelve_data_interval(interval)
+
+        response = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params={
+                "symbol": symbol,
+                "interval": td_interval,
+                "outputsize": 250,
+                "apikey": TWELVE_DATA_KEY,
+            },
+            timeout=15
+        )
+
+        data = response.json()
+
+        values = data.get("values", [])
+
+        if not values:
+            logger.warning(f"Twelve Data returned no values for {symbol}: {data}")
+            return None
+
+        candles = list(reversed(values))
+        closes = []
+
+        for candle in candles:
+            close_value = candle.get("close")
+
+            if close_value is not None:
+                closes.append(float(close_value))
+
+        if not closes:
+            return None
+
+        price = closes[-1]
+        ema50 = calculate_ema(closes, 50)
+        ema200 = calculate_ema(closes, 200)
+        rsi = calculate_rsi(closes, 14)
+        bb = calculate_bollinger(closes, 20)
+
+        return {
+            "price": round(price, 4),
+            "rsi": round(rsi, 1),
+            "ema": round(ema50, 4),
+            "ema200": round(ema200, 4),
+            "bb_upper": round(bb["bb_upper"], 4),
+            "bb_middle": round(bb["bb_middle"], 4),
+            "bb_lower": round(bb["bb_lower"], 4),
+            "source": "twelve_data"
+        }
+
+    except Exception as e:
+        logger.error(f"Twelve Data error for {symbol}: {e}")
+        return None
 
 
 def get_live_data_from_yahoo(symbol, interval):
@@ -172,10 +274,8 @@ def get_live_data_from_yahoo(symbol, interval):
             range_value = "5d"
         elif y_interval == "1h":
             range_value = "30d"
-        elif y_interval == "1d":
-            range_value = "1y"
         else:
-            range_value = "5y"
+            range_value = "1y"
 
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{y_symbol}"
 
@@ -206,94 +306,21 @@ def get_live_data_from_yahoo(symbol, interval):
         ema50 = calculate_ema(closes, 50)
         ema200 = calculate_ema(closes, 200)
         rsi = calculate_rsi(closes, 14)
+        bb = calculate_bollinger(closes, 20)
 
         return {
             "price": round(price, 4),
             "rsi": round(rsi, 1),
             "ema": round(ema50, 4),
             "ema200": round(ema200, 4),
+            "bb_upper": round(bb["bb_upper"], 4),
+            "bb_middle": round(bb["bb_middle"], 4),
+            "bb_lower": round(bb["bb_lower"], 4),
             "source": "yahoo"
         }
 
     except Exception as e:
         logger.error(f"Yahoo data error for {symbol}: {e}")
-        return None
-
-
-def get_live_data_from_twelve_data(symbol, interval):
-    try:
-        if not TWELVE_DATA_KEY:
-            return None
-
-        price_response = requests.get(
-            "https://api.twelvedata.com/price",
-            params={
-                "symbol": symbol,
-                "apikey": TWELVE_DATA_KEY,
-            },
-            timeout=10
-        )
-
-        price_json = price_response.json()
-        price = float(price_json.get("price", 0))
-
-        rsi_response = requests.get(
-            "https://api.twelvedata.com/rsi",
-            params={
-                "symbol": symbol,
-                "interval": interval,
-                "outputsize": 1,
-                "apikey": TWELVE_DATA_KEY,
-            },
-            timeout=10
-        )
-
-        rsi_data = rsi_response.json().get("values", [{}])
-        rsi = float(rsi_data[0].get("rsi", 50)) if rsi_data else 50.0
-
-        ema50_response = requests.get(
-            "https://api.twelvedata.com/ema",
-            params={
-                "symbol": symbol,
-                "interval": interval,
-                "time_period": 50,
-                "outputsize": 1,
-                "apikey": TWELVE_DATA_KEY,
-            },
-            timeout=10
-        )
-
-        ema50_data = ema50_response.json().get("values", [{}])
-        ema50 = float(ema50_data[0].get("ema", 0)) if ema50_data else 0.0
-
-        ema200_response = requests.get(
-            "https://api.twelvedata.com/ema",
-            params={
-                "symbol": symbol,
-                "interval": interval,
-                "time_period": 200,
-                "outputsize": 1,
-                "apikey": TWELVE_DATA_KEY,
-            },
-            timeout=10
-        )
-
-        ema200_data = ema200_response.json().get("values", [{}])
-        ema200 = float(ema200_data[0].get("ema", 0)) if ema200_data else 0.0
-
-        if price <= 0:
-            return None
-
-        return {
-            "price": round(price, 4),
-            "rsi": round(rsi, 1),
-            "ema": round(ema50, 4),
-            "ema200": round(ema200, 4),
-            "source": "twelve_data"
-        }
-
-    except Exception as e:
-        logger.error(f"Twelve Data error for {symbol}: {e}")
         return None
 
 
@@ -310,8 +337,6 @@ def tradingview_symbol(asset_name):
     mapping = {
         "gold": "OANDA:XAUUSD",
         "bitcoin": "COINBASE:BTCUSD",
-        "dxy": "TVC:DXY",
-        "gbpusd": "OANDA:GBPUSD",
     }
 
     return mapping.get(asset_name, "OANDA:XAUUSD")
@@ -436,18 +461,12 @@ def price_format(asset_name, price):
     if asset_name == "bitcoin":
         return f"{price:,.0f}"
 
-    if asset_name == "gbpusd":
-        return f"{price:.4f}"
-
     return f"{price:.2f}"
 
 
 def level_format(asset_name, level):
     if asset_name == "bitcoin":
         return f"{level:,.0f}"
-
-    if asset_name == "gbpusd":
-        return f"{level:.4f}"
 
     return f"{level:.2f}"
 
@@ -456,33 +475,52 @@ def display_asset(asset_name):
     mapping = {
         "gold": "Gold",
         "bitcoin": "BTC",
-        "dxy": "DXY",
-        "gbpusd": "GBP/USD",
     }
 
     return mapping.get(asset_name, asset_name.upper())
 
 
-def bias_details(asset_name, price, ema50, ema200, rsi):
+def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
     above_50 = price > ema50
     above_200 = price > ema200
 
-    if above_50 and above_200:
+    near_upper_band = price >= bb_upper * 0.998
+    near_lower_band = price <= bb_lower * 1.002
+
+    if above_50 and above_200 and rsi >= 52:
         return {
             "bias": "bullish",
             "trade_word": "buys",
             "opposite_word": "sells",
             "key_level": ema50,
-            "tone": "buyers are still showing control"
+            "tone": "buyers are still holding control"
         }
 
-    if not above_50 and not above_200:
+    if not above_50 and not above_200 and rsi <= 50:
         return {
             "bias": "bearish",
             "trade_word": "sells",
             "opposite_word": "buys",
             "key_level": ema50,
-            "tone": "sellers still have control"
+            "tone": "sellers are still keeping pressure on the chart"
+        }
+
+    if near_upper_band and rsi >= 60:
+        return {
+            "bias": "bullish but stretched",
+            "trade_word": "buys on pullbacks",
+            "opposite_word": "sells",
+            "key_level": ema50,
+            "tone": "buyers have momentum, but price is getting close to the upper Bollinger Band"
+        }
+
+    if near_lower_band and rsi <= 40:
+        return {
+            "bias": "bearish but stretched",
+            "trade_word": "sells on pullbacks",
+            "opposite_word": "buys",
+            "key_level": ema50,
+            "tone": "sellers have pressure, but price is getting close to the lower Bollinger Band"
         }
 
     if price >= ema50:
@@ -499,7 +537,7 @@ def bias_details(asset_name, price, ema50, ema200, rsi):
         "trade_word": "sells",
         "opposite_word": "buys",
         "key_level": max(ema50, ema200),
-        "tone": "sellers are still keeping pressure on the chart"
+        "tone": "sellers still have the cleaner side for now"
     }
 
 
@@ -510,13 +548,19 @@ def generate_market_message(asset_name, data, interval):
     rsi = data["rsi"]
     ema50 = data["ema"]
     ema200 = data["ema200"]
+    bb_upper = data["bb_upper"]
+    bb_middle = data["bb_middle"]
+    bb_lower = data["bb_lower"]
 
     price_text = price_format(asset_name, price)
     ema50_text = level_format(asset_name, ema50)
     ema200_text = level_format(asset_name, ema200)
-    visible_interval = chart_interval(interval)
+    bb_upper_text = level_format(asset_name, bb_upper)
+    bb_middle_text = level_format(asset_name, bb_middle)
+    bb_lower_text = level_format(asset_name, bb_lower)
+    visible_interval = human_interval(interval)
 
-    details = bias_details(asset_name, price, ema50, ema200, rsi)
+    details = bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower)
     bias = details["bias"]
     trade_word = details["trade_word"]
     opposite_word = details["opposite_word"]
@@ -525,30 +569,30 @@ def generate_market_message(asset_name, data, interval):
     tone = details["tone"]
 
     line1_options = [
-        f"✅ {name} is around {price_text} on the {visible_interval} chart, and the overall picture is still leaning {bias}.",
-        f"✅ {name} is trading near {price_text}, with price reacting around an important area on the {visible_interval} chart.",
-        f"✅ {name} is currently near {price_text}, and the market is showing a {bias} tone for now.",
-        f"✅ {name} is moving around {price_text} on the {visible_interval}, and the chart is not fully clean yet.",
-        f"✅ {name} is sitting around {price_text}, and we are still waiting for a stronger confirmation from this zone.",
-        f"✅ {name} is trading close to {price_text}, and the current structure is giving a {bias} feel."
+        f"✅ {name} is trading around {price_text} on the {visible_interval} timeframe, and the current view is leaning {bias}.",
+        f"✅ On the {visible_interval} chart, {name} is sitting near {price_text}, with price still deciding its next clean direction.",
+        f"✅ {name} is around {price_text} on the {visible_interval} timeframe, and the structure is giving a {bias} feel for now.",
+        f"✅ Looking at the {visible_interval} chart, {name} is reacting around {price_text}, so this area is important.",
+        f"✅ {name} is moving close to {price_text} on the {visible_interval}, and we need confirmation before forcing a trade.",
+        f"✅ The {visible_interval} picture on {name} is still developing, with price currently around {price_text}."
     ]
 
     line2_options = [
-        f"✅ Price is around EMA 50 at {ema50_text} and EMA 200 at {ema200_text}, so {tone}.",
-        f"✅ The main levels I’m watching are {ema50_text} and {ema200_text}, because they are guiding the next direction.",
-        f"✅ As long as price respects the {key_level_text} area, the current bias can stay active.",
-        f"✅ The chart is still respecting the key EMA zone, so I would not rush against the current move yet.",
-        f"✅ RSI is near {rsi}, which shows the market is not too stretched and still has room for the next move.",
-        f"✅ Momentum is fairly balanced with RSI near {rsi}, so the next clean break is important."
+        f"✅ EMA 50 is near {ema50_text} and EMA 200 is near {ema200_text}, so {tone}.",
+        f"✅ RSI is around {rsi}, which tells us momentum is not too stretched and the next clean break matters.",
+        f"✅ Bollinger Bands are showing a range between {bb_lower_text} and {bb_upper_text}, so I’m watching for a reaction near those areas.",
+        f"✅ Price is around the Bollinger midline near {bb_middle_text}, which means the market still needs a stronger push.",
+        f"✅ The EMA zone between {ema50_text} and {ema200_text} is the main area guiding the next move.",
+        f"✅ RSI near {rsi} and the EMA structure both suggest we should wait for clean confirmation."
     ]
 
     line3_options = [
-        f"✅ For now, {trade_word} make more sense while price stays around this structure, but I would change view if {name} breaks back through {key_level_text}.",
-        f"✅ Bias stays with {trade_word} for now, but if {name} clears {key_level_text} cleanly, {opposite_word} can start looking better.",
-        f"✅ I would be more comfortable looking for {trade_word} unless price gives a strong break above {key_level_text}.",
+        f"✅ For now, {trade_word} make more sense while price stays under pressure, but I would change view if {name} breaks {key_level_text} cleanly.",
+        f"✅ Bias stays with {trade_word} for now, but if {name} clears {key_level_text}, {opposite_word} can start looking better.",
+        f"✅ I would be more comfortable looking for {trade_word} unless price gives a strong break through {key_level_text}.",
         f"✅ At the moment, {trade_word} still look cleaner, but confirmation is important before forcing any entry.",
         f"✅ If {name} rejects this area again, {trade_word} can stay in play, but a clean break changes the picture.",
-        f"✅ Overall, I would keep the focus on {trade_word} for now, while watching {key_level_text} as the level that can shift momentum."
+        f"✅ Overall, I would keep the focus on {trade_word} while watching {key_level_text} as the level that can shift momentum."
     ]
 
     line1 = random.choice(line1_options)
@@ -565,36 +609,18 @@ def choose_asset():
         {
             "symbol": "XAU/USD",
             "name": "gold",
-            "interval": random.choice(["5min", "15min", "15min", "1h", "1h", "4h", "1week"])
+            "interval": random.choice(["15min", "15min", "30min", "1h", "1h", "4h", "1day"])
         }
-        for _ in range(70)
+        for _ in range(67)
     ]
 
     asset_pool += [
         {
             "symbol": "BTC/USD",
             "name": "bitcoin",
-            "interval": random.choice(["15min", "1h", "1h", "4h"])
+            "interval": random.choice(["30min", "1h", "1h", "4h", "1day"])
         }
-        for _ in range(25)
-    ]
-
-    asset_pool += [
-        {
-            "symbol": "DXY",
-            "name": "dxy",
-            "interval": random.choice(["1h", "4h", "1day"])
-        }
-        for _ in range(3)
-    ]
-
-    asset_pool += [
-        {
-            "symbol": "GBP/USD",
-            "name": "gbpusd",
-            "interval": random.choice(["1h", "4h", "1day"])
-        }
-        for _ in range(2)
+        for _ in range(33)
     ]
 
     return random.choice(asset_pool)
@@ -624,22 +650,10 @@ def choose_asset_from_query():
         "bitcoin": {
             "symbol": "BTC/USD",
             "name": "bitcoin"
-        },
-        "dxy": {
-            "symbol": "DXY",
-            "name": "dxy"
-        },
-        "gbpusd": {
-            "symbol": "GBP/USD",
-            "name": "gbpusd"
-        },
-        "gbp": {
-            "symbol": "GBP/USD",
-            "name": "gbpusd"
         }
     }
 
-    valid_intervals = ["5min", "15min", "30min", "45min", "1h", "4h", "1day", "1week"]
+    valid_intervals = ["5min", "15min", "30min", "1h", "4h", "1day"]
 
     if requested_asset in asset_map:
         asset = asset_map[requested_asset]
@@ -650,7 +664,7 @@ def choose_asset_from_query():
 
 
 def choose_wait_minutes():
-    return random.choice([10, 15, 18, 22, 25, 30, 45, 60])
+    return random.choice([15, 18, 25, 30, 45, 60])
 
 
 async def send_message_to_entity(entity_target, message_text, chart_image=None, reply_to=None):
@@ -938,7 +952,7 @@ def test_message():
 
     message = data.get(
         "message",
-        "**🔔 Market Update**\n\n✅ Gold is around 4182.40 on the 15m chart, and the overall picture is still leaning bearish.\n\n✅ RSI is near 38, so the market still has room for the next move.\n\n✅ For now, sells make more sense while Gold stays below the key level."
+        "**🔔 Market Update**\n\n✅ Gold is trading around 4182.40 on the 15M timeframe, and the current view is leaning bearish.\n\n✅ RSI is around 38, while EMA 50 and EMA 200 are still acting as key levels.\n\n✅ For now, sells make more sense unless Gold breaks back above the main EMA zone."
     )
 
     future = asyncio.run_coroutine_threadsafe(send_to_saved_messages(message), loop)

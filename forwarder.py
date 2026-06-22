@@ -338,10 +338,6 @@ def chart_asset_config(asset_name, interval):
         },
         "studies": [
             {
-                "name": "Volume",
-                "forceOverlay": True
-            },
-            {
                 "name": "Moving Average Exponential",
                 "input": {
                     "length": 50,

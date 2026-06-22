@@ -6,7 +6,7 @@ import random
 import time
 import requests
 import io
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
@@ -27,6 +27,7 @@ VANTAGE_GROUP_ID = int(os.environ.get("VANTAGE_GROUP_ID", "0"))
 VANTAGE_TOPIC_ID = int(os.environ.get("VANTAGE_TOPIC_ID", "0"))
 
 AUTO_START_BROADCASTER = os.environ.get("AUTO_START_BROADCASTER", "false").lower() == "true"
+ENABLE_GROUP_SEND = os.environ.get("ENABLE_GROUP_SEND", "false").lower() == "true"
 
 client = None
 loop = asyncio.new_event_loop()
@@ -187,7 +188,7 @@ def get_live_data_from_yahoo(symbol, interval):
             "User-Agent": "Mozilla/5.0"
         }
 
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=15)
         data = response.json()
 
         result = data.get("chart", {}).get("result", [])
@@ -230,7 +231,7 @@ def get_live_data_from_twelve_data(symbol, interval):
                 "symbol": symbol,
                 "apikey": TWELVE_DATA_KEY,
             },
-            timeout=8
+            timeout=10
         )
 
         price_json = price_response.json()
@@ -244,7 +245,7 @@ def get_live_data_from_twelve_data(symbol, interval):
                 "outputsize": 1,
                 "apikey": TWELVE_DATA_KEY,
             },
-            timeout=8
+            timeout=10
         )
 
         rsi_data = rsi_response.json().get("values", [{}])
@@ -259,7 +260,7 @@ def get_live_data_from_twelve_data(symbol, interval):
                 "outputsize": 1,
                 "apikey": TWELVE_DATA_KEY,
             },
-            timeout=8
+            timeout=10
         )
 
         ema50_data = ema50_response.json().get("values", [{}])
@@ -274,7 +275,7 @@ def get_live_data_from_twelve_data(symbol, interval):
                 "outputsize": 1,
                 "apikey": TWELVE_DATA_KEY,
             },
-            timeout=8
+            timeout=10
         )
 
         ema200_data = ema200_response.json().get("values", [{}])
@@ -316,36 +317,95 @@ def tradingview_symbol(asset_name):
     return mapping.get(asset_name, "OANDA:XAUUSD")
 
 
-def get_chart_image(asset_name, interval):
+def chart_asset_config(asset_name, interval):
+    symbol = tradingview_symbol(asset_name)
+    interval_value = chart_interval(interval)
+
+    payload = {
+        "symbol": symbol,
+        "interval": interval_value,
+        "theme": "dark",
+        "width": 800,
+        "height": 600,
+        "timezone": "Europe/London",
+        "override": {
+            "showStudyLastValue": True,
+            "showSeriesLastValue": True,
+            "showSeriesOHLC": True,
+            "showBarChange": True,
+            "showLegendValues": True,
+            "mainPaneHeight": 420
+        },
+        "studies": [
+            {
+                "name": "Volume",
+                "forceOverlay": True
+            },
+            {
+                "name": "Moving Average Exponential",
+                "input": {
+                    "length": 50,
+                    "source": "close",
+                    "offset": 0,
+                    "smoothingLine": "SMA",
+                    "smoothingLength": 9
+                },
+                "override": {
+                    "Plot.linewidth": 2,
+                    "Plot.plottype": "line",
+                    "Plot.color": "rgb(255,193,7)"
+                }
+            },
+            {
+                "name": "Moving Average Exponential",
+                "input": {
+                    "length": 200,
+                    "source": "close",
+                    "offset": 0,
+                    "smoothingLine": "SMA",
+                    "smoothingLength": 9
+                },
+                "override": {
+                    "Plot.linewidth": 2,
+                    "Plot.plottype": "line",
+                    "Plot.color": "rgb(33,150,243)"
+                }
+            },
+            {
+                "name": "Relative Strength Index",
+                "input": {
+                    "length": 14,
+                    "source": "close"
+                }
+            }
+        ]
+    }
+
+    return payload
+
+
+def get_chart_image_result(asset_name, interval):
     try:
         if not CHART_IMG_KEY:
-            return None
+            return {
+                "ok": False,
+                "image": None,
+                "error": "CHART_IMG_KEY missing"
+            }
 
-        params = [
-            ("symbol", tradingview_symbol(asset_name)),
-            ("interval", chart_interval(interval)),
-            ("theme", "dark"),
-            ("width", "900"),
-            ("height", "700"),
-            ("style", "candle"),
-            ("format", "png"),
-            ("studies", "EMA:50"),
-            ("studies", "EMA:200"),
-            ("studies", "RSI"),
-            ("studies", "Volume"),
-            ("key", CHART_IMG_KEY),
-        ]
+        payload = chart_asset_config(asset_name, interval)
 
         headers = {
-            "Authorization": f"Bearer {CHART_IMG_KEY}",
+            "x-api-key": CHART_IMG_KEY,
+            "content-type": "application/json",
             "User-Agent": "Mozilla/5.0"
         }
 
-        response = requests.get(
-            "https://api.chart-img.com/v1/tradingview/advanced-chart",
-            params=params,
+        response = requests.post(
+            "https://api.chart-img.com/v2/tradingview/advanced-chart",
+            json=payload,
             headers=headers,
-            timeout=30
+            timeout=75
         )
 
         content_type = response.headers.get("content-type", "")
@@ -353,14 +413,27 @@ def get_chart_image(asset_name, interval):
         if response.status_code == 200 and "image" in content_type:
             image = io.BytesIO(response.content)
             image.name = f"{asset_name}_chart.png"
-            return image
 
-        logger.error(f"Chart image error: {response.status_code} {response.text[:300]}")
-        return None
+            return {
+                "ok": True,
+                "image": image,
+                "error": None
+            }
+
+        return {
+            "ok": False,
+            "image": None,
+            "error": f"Chart IMG error {response.status_code}: {response.text[:500]}"
+        }
 
     except Exception as e:
         logger.error(f"Chart image fetch error: {e}")
-        return None
+
+        return {
+            "ok": False,
+            "image": None,
+            "error": str(e)
+        }
 
 
 def price_format(asset_name, price):
@@ -398,11 +471,13 @@ def rsi_comment(asset_name, rsi, price, ema50, ema200):
     if rsi >= 70:
         if asset_name == "gold":
             return f"RSI is near {rsi}, so Gold is looking stretched and I would not chase it too high without a clean pullback."
+
         return f"RSI is near {rsi}, so momentum is strong but the move is getting a little stretched."
 
     if rsi <= 30:
         if asset_name == "gold":
             return f"RSI is near {rsi}, so sellers have control but Gold is getting close to a reaction area."
+
         return f"RSI is near {rsi}, so sellers are still in control but the move is getting slightly stretched."
 
     if 45 <= rsi <= 55:
@@ -494,11 +569,60 @@ def choose_asset():
     return random.choice(asset_pool)
 
 
+def choose_asset_from_query():
+    requested_asset = request.args.get("asset", "").lower().strip()
+    requested_interval = request.args.get("interval", "").lower().strip()
+
+    asset_map = {
+        "gold": {
+            "symbol": "XAU/USD",
+            "name": "gold"
+        },
+        "xau": {
+            "symbol": "XAU/USD",
+            "name": "gold"
+        },
+        "xauusd": {
+            "symbol": "XAU/USD",
+            "name": "gold"
+        },
+        "btc": {
+            "symbol": "BTC/USD",
+            "name": "bitcoin"
+        },
+        "bitcoin": {
+            "symbol": "BTC/USD",
+            "name": "bitcoin"
+        },
+        "dxy": {
+            "symbol": "DXY",
+            "name": "dxy"
+        },
+        "gbpusd": {
+            "symbol": "GBP/USD",
+            "name": "gbpusd"
+        },
+        "gbp": {
+            "symbol": "GBP/USD",
+            "name": "gbpusd"
+        }
+    }
+
+    valid_intervals = ["5min", "15min", "30min", "45min", "1h", "4h", "1day", "1week"]
+
+    if requested_asset in asset_map:
+        asset = asset_map[requested_asset]
+        asset["interval"] = requested_interval if requested_interval in valid_intervals else "15min"
+        return asset
+
+    return choose_asset()
+
+
 def choose_wait_minutes():
     return random.choice([10, 15, 18, 22, 25, 30, 45, 60])
 
 
-async def send_to_vantage(message_text, chart_image=None):
+async def send_message_to_entity(entity_target, message_text, chart_image=None, reply_to=None):
     global client
 
     try:
@@ -506,18 +630,14 @@ async def send_to_vantage(message_text, chart_image=None):
             logger.error("Not logged in")
             return False
 
-        if not VANTAGE_GROUP_ID:
-            logger.error("VANTAGE_GROUP_ID missing")
-            return False
-
-        entity = await client.get_entity(VANTAGE_GROUP_ID)
+        entity = await client.get_entity(entity_target)
 
         kwargs = {
             "parse_mode": "md"
         }
 
-        if VANTAGE_TOPIC_ID and VANTAGE_TOPIC_ID > 0:
-            kwargs["reply_to"] = VANTAGE_TOPIC_ID
+        if reply_to:
+            kwargs["reply_to"] = reply_to
 
         if chart_image:
             await client.send_file(
@@ -534,7 +654,7 @@ async def send_to_vantage(message_text, chart_image=None):
                 **kwargs
             )
 
-        logger.info("Message sent to Vantage")
+        logger.info("Message sent")
         return True
 
     except Exception as e:
@@ -542,12 +662,36 @@ async def send_to_vantage(message_text, chart_image=None):
         return False
 
 
-async def create_and_send_market_update(send=True):
-    asset = choose_asset()
+async def send_to_saved_messages(message_text, chart_image=None):
+    return await send_message_to_entity("me", message_text, chart_image=chart_image)
+
+
+async def send_to_vantage(message_text, chart_image=None):
+    if not ENABLE_GROUP_SEND:
+        logger.warning("Group sending is locked")
+        return False
+
+    if not VANTAGE_GROUP_ID:
+        logger.error("VANTAGE_GROUP_ID missing")
+        return False
+
+    if not chart_image:
+        logger.error("Chart image missing. Refusing to send to group.")
+        return False
+
+    return await send_message_to_entity(
+        VANTAGE_GROUP_ID,
+        message_text,
+        chart_image=chart_image,
+        reply_to=VANTAGE_TOPIC_ID if VANTAGE_TOPIC_ID and VANTAGE_TOPIC_ID > 0 else None
+    )
+
+
+async def create_market_update(send_mode="preview"):
+    asset = choose_asset_from_query()
     data = get_live_data(asset["symbol"], asset["interval"])
 
     if not data or data["price"] <= 0:
-        logger.warning(f"No data for {asset['name']}")
         return {
             "ok": False,
             "asset": asset,
@@ -555,37 +699,93 @@ async def create_and_send_market_update(send=True):
         }
 
     message = generate_market_message(asset["name"], data, asset["interval"])
-    chart_image = get_chart_image(asset["name"], asset["interval"])
+    chart_result = get_chart_image_result(asset["name"], asset["interval"])
 
-    if not send:
+    chart_status = "available" if chart_result["ok"] else "not available"
+    chart_error = chart_result["error"]
+
+    if send_mode == "saved":
+        if not chart_result["ok"]:
+            return {
+                "ok": False,
+                "asset": asset,
+                "data": data,
+                "message": message,
+                "chart_image": chart_status,
+                "chart_error": chart_error,
+                "sent": "not sent"
+            }
+
+        success = await send_to_saved_messages(message, chart_image=chart_result["image"])
+
         return {
-            "ok": True,
+            "ok": success,
             "asset": asset,
             "data": data,
             "message": message,
-            "chart_image": "available" if chart_image else "not available"
+            "chart_image": chart_status,
+            "sent": "saved_messages" if success else "failed"
         }
 
-    success = await send_to_vantage(message, chart_image=chart_image)
+    if send_mode == "vantage":
+        if not ENABLE_GROUP_SEND:
+            return {
+                "ok": False,
+                "asset": asset,
+                "data": data,
+                "message": message,
+                "chart_image": chart_status,
+                "chart_error": chart_error,
+                "sent": "locked",
+                "unlock_needed": "Set ENABLE_GROUP_SEND=true in Railway Variables when ready"
+            }
+
+        if not chart_result["ok"]:
+            return {
+                "ok": False,
+                "asset": asset,
+                "data": data,
+                "message": message,
+                "chart_image": chart_status,
+                "chart_error": chart_error,
+                "sent": "not sent because chart image is missing"
+            }
+
+        success = await send_to_vantage(message, chart_image=chart_result["image"])
+
+        return {
+            "ok": success,
+            "asset": asset,
+            "data": data,
+            "message": message,
+            "chart_image": chart_status,
+            "sent": "vantage" if success else "failed"
+        }
 
     return {
-        "ok": success,
+        "ok": True,
         "asset": asset,
         "data": data,
         "message": message,
-        "chart_image": "sent" if chart_image else "not sent"
+        "chart_image": chart_status,
+        "chart_error": chart_error
     }
 
 
 async def broadcast_loop():
     global broadcaster_running
 
+    if not ENABLE_GROUP_SEND:
+        logger.warning("Broadcaster blocked because ENABLE_GROUP_SEND is false")
+        broadcaster_running = False
+        return
+
     broadcaster_running = True
     logger.info("Auto broadcaster started")
 
     while broadcaster_running:
         try:
-            result = await create_and_send_market_update(send=True)
+            result = await create_market_update(send_mode="vantage")
             logger.info(f"Broadcast result: {result}")
 
             wait_minutes = choose_wait_minutes()
@@ -606,8 +806,12 @@ def health():
         "vantage_group": VANTAGE_GROUP_ID,
         "topic_id": VANTAGE_TOPIC_ID,
         "auto_start": AUTO_START_BROADCASTER,
+        "group_send_enabled": ENABLE_GROUP_SEND,
         "chart_img_enabled": CHART_IMG_KEY != "",
-        "twelve_data_enabled": TWELVE_DATA_KEY != ""
+        "twelve_data_enabled": TWELVE_DATA_KEY != "",
+        "safe_test_saved_messages": "/send_saved_test",
+        "safe_chart_preview": "/preview_chart",
+        "safe_text_preview": "/preview_analysis"
     })
 
 
@@ -617,6 +821,12 @@ def start_broadcaster():
 
     if broadcaster_running:
         return jsonify({"status": "Already running"})
+
+    if not ENABLE_GROUP_SEND:
+        return jsonify({
+            "status": "blocked",
+            "reason": "ENABLE_GROUP_SEND is false, so the group is protected"
+        }), 403
 
     asyncio.run_coroutine_threadsafe(broadcast_loop(), loop)
 
@@ -634,10 +844,38 @@ def stop_broadcaster():
 
 @app.route("/preview_analysis", methods=["GET"])
 def preview_analysis():
-    future = asyncio.run_coroutine_threadsafe(create_and_send_market_update(send=False), loop)
+    future = asyncio.run_coroutine_threadsafe(create_market_update(send_mode="preview"), loop)
 
     try:
-        result = future.result(timeout=30)
+        result = future.result(timeout=90)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/preview_chart", methods=["GET"])
+def preview_chart():
+    asset = choose_asset_from_query()
+    chart_result = get_chart_image_result(asset["name"], asset["interval"])
+
+    if not chart_result["ok"]:
+        return jsonify({
+            "ok": False,
+            "asset": asset,
+            "chart_error": chart_result["error"]
+        }), 500
+
+    image_bytes = chart_result["image"].getvalue()
+
+    return Response(image_bytes, mimetype="image/png")
+
+
+@app.route("/send_saved_test", methods=["GET"])
+def send_saved_test():
+    future = asyncio.run_coroutine_threadsafe(create_market_update(send_mode="saved"), loop)
+
+    try:
+        result = future.result(timeout=100)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -645,11 +883,20 @@ def preview_analysis():
 
 @app.route("/test_analysis", methods=["GET"])
 def test_analysis():
-    future = asyncio.run_coroutine_threadsafe(create_and_send_market_update(send=True), loop)
+    return jsonify({
+        "status": "safe_locked",
+        "message": "This endpoint does not send to Vantage anymore. Use /send_saved_test for safe testing in Saved Messages."
+    })
+
+
+@app.route("/send_vantage_once", methods=["GET"])
+def send_vantage_once():
+    future = asyncio.run_coroutine_threadsafe(create_market_update(send_mode="vantage"), loop)
 
     try:
-        result = future.result(timeout=45)
-        return jsonify(result)
+        result = future.result(timeout=100)
+        status_code = 200 if result.get("ok") else 403
+        return jsonify(result), status_code
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -663,11 +910,11 @@ def test_message():
         "**🔔 Market Update**\n\nGold is trading around 4182.40 on the 15m chart, still sitting below the EMA 50 at 4191.20 and EMA 200 at 4204.80.\nRSI is near 38, so sellers still have control, but price is getting close to an area where buyers may try to react.\nIf Gold fails to reclaim 4191.20, the next move lower can stay active."
     )
 
-    future = asyncio.run_coroutine_threadsafe(send_to_vantage(message), loop)
+    future = asyncio.run_coroutine_threadsafe(send_to_saved_messages(message), loop)
 
     try:
         success = future.result(timeout=20)
-        return jsonify({"status": "Sent" if success else "Failed"})
+        return jsonify({"status": "Sent to Saved Messages" if success else "Failed"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -712,32 +959,19 @@ def verify():
 
 @app.route("/forward_tp", methods=["POST"])
 def forward_tp():
-    data = request.get_json()
-
-    if not data:
-        return jsonify({"error": "No data"}), 400
-
-    close_type = data.get("close_type", "")
-    message = data.get("message", "")
-
-    if not message:
-        return jsonify({"error": "No message"}), 400
-
-    if close_type not in ["TP1", "TP2", "TP3"]:
-        return jsonify({"status": "skipped"}), 200
-
-    future = asyncio.run_coroutine_threadsafe(send_to_vantage(message), loop)
-
-    try:
-        success = future.result(timeout=15)
-        return jsonify({"status": "sent" if success else "failed"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "status": "disabled",
+        "reason": "This route is disabled in safe mode"
+    }), 403
 
 
 def start_broadcaster_on_boot():
     if not AUTO_START_BROADCASTER:
         logger.info("Auto start broadcaster disabled")
+        return
+
+    if not ENABLE_GROUP_SEND:
+        logger.warning("Auto start blocked because ENABLE_GROUP_SEND is false")
         return
 
     time.sleep(10)

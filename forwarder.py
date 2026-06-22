@@ -34,6 +34,7 @@ client = None
 loop = asyncio.new_event_loop()
 phone_code_hash = None
 broadcaster_running = False
+rotation_index = 0
 
 
 def run_loop():
@@ -148,6 +149,7 @@ def yahoo_symbol(symbol):
     mapping = {
         "XAU/USD": "GC=F",
         "BTC/USD": "BTC-USD",
+        "WTI/USD": "CL=F",
     }
 
     return mapping.get(symbol, symbol)
@@ -336,6 +338,7 @@ def tradingview_symbol(asset_name):
     mapping = {
         "gold": "OANDA:XAUUSD",
         "bitcoin": "COINBASE:BTCUSD",
+        "oil": "TVC:USOIL",
     }
 
     return mapping.get(asset_name, "OANDA:XAUUSD")
@@ -460,12 +463,18 @@ def price_format(asset_name, price):
     if asset_name == "bitcoin":
         return f"{price:,.0f}"
 
+    if asset_name == "oil":
+        return f"{price:.2f}"
+
     return f"{price:.2f}"
 
 
 def level_format(asset_name, level):
     if asset_name == "bitcoin":
         return f"{level:,.0f}"
+
+    if asset_name == "oil":
+        return f"{level:.2f}"
 
     return f"{level:.2f}"
 
@@ -474,9 +483,20 @@ def display_asset(asset_name):
     mapping = {
         "gold": "Gold",
         "bitcoin": "BTC",
+        "oil": "USOIL",
     }
 
     return mapping.get(asset_name, asset_name.upper())
+
+
+def asset_context(asset_name):
+    mapping = {
+        "gold": "Gold reacts strongly to dollar movement, liquidity, and risk sentiment, so clean confirmation matters.",
+        "bitcoin": "BTC can move fast around liquidity zones, so I’m watching momentum and structure together.",
+        "oil": "USOIL is sensitive to supply headlines, dollar movement, and risk sentiment, so I’m watching reactions carefully.",
+    }
+
+    return mapping.get(asset_name, "The market is moving around an important zone, so confirmation matters.")
 
 
 def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
@@ -572,6 +592,8 @@ def generate_market_message(asset_name, data, interval):
     position_phrase = details["position_phrase"]
     shift_phrase = details["shift_phrase"]
 
+    context = asset_context(asset_name)
+
     line1_options = [
         f"✅ {name} is trading around {price_text} on the {visible_interval} timeframe, and the current view is leaning {bias}.",
         f"✅ Looking at the {visible_interval} chart, {name} is reacting around {price_text}, so this zone matters right now.",
@@ -595,34 +617,41 @@ def generate_market_message(asset_name, data, interval):
         f"✅ I would be more comfortable looking for {trade_word}, but only with confirmation around these levels.",
         f"✅ At the moment, {trade_word} still look cleaner, while {opposite_word} need a stronger break before looking attractive.",
         f"✅ If {name} respects this area again, {trade_word} can stay in play, but a clean break changes the picture.",
-        f"✅ Overall, I would keep focus on {trade_word} for now, while watching {key_level_text} as the level that can change the bias."
+        f"✅ Overall, I would keep focus on {trade_word} for now, while watching {key_level_text} as the level that can change the bias.",
+        f"✅ {context} For now, {trade_word} still look like the cleaner side unless the structure changes."
     ]
 
     return f"**🔔 Market Update**\n\n{random.choice(line1_options)}\n\n{random.choice(line2_options)}\n\n{random.choice(line3_options)}"
 
 
-def choose_asset():
-    asset_pool = []
-
-    asset_pool += [
+def rotation_assets():
+    return [
         {
             "symbol": "XAU/USD",
             "name": "gold",
-            "interval": random.choice(["15min", "15min", "30min", "1h", "1h", "4h", "1day"])
-        }
-        for _ in range(67)
-    ]
-
-    asset_pool += [
+            "interval": random.choice(["15min", "30min", "1h", "4h"])
+        },
         {
             "symbol": "BTC/USD",
             "name": "bitcoin",
-            "interval": random.choice(["30min", "1h", "1h", "4h", "1day"])
+            "interval": random.choice(["30min", "1h", "4h"])
+        },
+        {
+            "symbol": "WTI/USD",
+            "name": "oil",
+            "interval": random.choice(["15min", "30min", "1h", "4h"])
         }
-        for _ in range(33)
     ]
 
-    return random.choice(asset_pool)
+
+def choose_asset():
+    global rotation_index
+
+    assets = rotation_assets()
+    asset = assets[rotation_index % len(assets)]
+    rotation_index += 1
+
+    return asset
 
 
 def choose_asset_from_query():
@@ -649,6 +678,18 @@ def choose_asset_from_query():
         "bitcoin": {
             "symbol": "BTC/USD",
             "name": "bitcoin"
+        },
+        "oil": {
+            "symbol": "WTI/USD",
+            "name": "oil"
+        },
+        "usoil": {
+            "symbol": "WTI/USD",
+            "name": "oil"
+        },
+        "wti": {
+            "symbol": "WTI/USD",
+            "name": "oil"
         }
     }
 
@@ -656,14 +697,14 @@ def choose_asset_from_query():
 
     if requested_asset in asset_map:
         asset = asset_map[requested_asset]
-        asset["interval"] = requested_interval if requested_interval in valid_intervals else "15min"
+        asset["interval"] = requested_interval if requested_interval in valid_intervals else "30min"
         return asset
 
     return choose_asset()
 
 
 def choose_wait_minutes():
-    return random.choice([15, 18, 25, 30, 45, 60])
+    return 30
 
 
 async def send_message_to_entity(entity_target, message_text, chart_image=None, reply_to=None):
@@ -853,6 +894,8 @@ def health():
         "group_send_enabled": ENABLE_GROUP_SEND,
         "chart_img_enabled": CHART_IMG_KEY != "",
         "twelve_data_enabled": TWELVE_DATA_KEY != "",
+        "rotation": "Gold, BTC, USOIL",
+        "post_interval_minutes": 30,
         "safe_test_saved_messages": "/send_saved_test",
         "safe_chart_preview": "/preview_chart",
         "safe_text_preview": "/preview_analysis"

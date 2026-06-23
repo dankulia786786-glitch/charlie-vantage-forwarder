@@ -490,28 +490,40 @@ def display_asset(asset_name):
 
 def asset_context(asset_name):
     mapping = {
-        "gold": "Gold reacts strongly to dollar movement, liquidity, and risk sentiment, so clean confirmation matters.",
-        "bitcoin": "BTC can move fast around liquidity zones, so I’m watching momentum and structure together.",
-        "oil": "USOIL is sensitive to supply headlines, dollar movement, and risk sentiment, so I’m watching reactions carefully.",
+        "gold": [
+            "Gold is still reacting around an important liquidity area, so I would rather wait for confirmation than force a trade.",
+            "Gold can move quickly around these zones, especially when the dollar is active, so the reaction here matters.",
+            "For Gold, this is the kind of area where patience matters because one clean candle can change the short term picture."
+        ],
+        "bitcoin": [
+            "BTC is moving around a liquidity area, so I’m watching whether buyers can hold the structure or sellers take control again.",
+            "Bitcoin can flip direction quickly from these levels, so confirmation matters more than guessing.",
+            "For BTC, I’d rather see price prove the move first instead of chasing after one candle."
+        ],
+        "oil": [
+            "USOIL is reacting around a sensitive zone, and with oil I prefer waiting for a cleaner break before taking a strong view.",
+            "Oil can move sharply when headlines or dollar strength come in, so this area needs a bit of patience.",
+            "For USOIL, the next reaction around this level will tell us whether sellers are still in control or buyers are stepping back in."
+        ]
     }
 
-    return mapping.get(asset_name, "The market is moving around an important zone, so confirmation matters.")
+    return random.choice(mapping.get(asset_name, ["The market is around an important area, so confirmation matters."]))
 
 
 def momentum_phrase(rsi):
     if rsi >= 70:
-        return f"RSI is around {rsi}, which shows the market is stretched into an overbought area, so I would be careful chasing late entries."
+        return f"RSI is around {rsi}, so the move is starting to look stretched. I would be careful chasing it too late."
 
     if rsi >= 55:
-        return f"RSI is around {rsi}, which shows buyers still have momentum without the chart looking too stretched yet."
+        return f"RSI is around {rsi}, which shows buyers still have some control, but I’d still want the level to hold cleanly."
 
     if rsi >= 45:
-        return f"RSI is around {rsi}, which shows momentum is fairly balanced and the next clean break matters."
+        return f"RSI is around {rsi}, so momentum is fairly balanced right now. That usually means the next clean break is more important than guessing."
 
     if rsi >= 35:
-        return f"RSI is around {rsi}, which shows sellers still have some pressure, but confirmation is still important."
+        return f"RSI is around {rsi}, which tells me sellers still have pressure, but it’s not a place to rush without confirmation."
 
-    return f"RSI is around {rsi}, which shows sellers have momentum, but price is getting close to an oversold area."
+    return f"RSI is around {rsi}, so sellers have momentum, but price is also getting close to an oversold area. I would be careful entering too late."
 
 
 def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
@@ -526,8 +538,8 @@ def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
             "trade_word": "buys",
             "opposite_word": "sells",
             "key_level": ema50,
-            "position_phrase": "while price holds above the main EMA zone",
-            "shift_phrase": "if price loses that EMA zone cleanly"
+            "position_phrase": "while price keeps holding above the EMA zone",
+            "shift_phrase": "if that support breaks properly"
         }
 
     if not above_50 and not above_200 and rsi <= 50:
@@ -536,42 +548,42 @@ def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
             "trade_word": "sells",
             "opposite_word": "buys",
             "key_level": ema50,
-            "position_phrase": "while price stays below the main EMA zone",
-            "shift_phrase": "if price breaks back above that EMA zone cleanly"
+            "position_phrase": "while price stays below the EMA zone",
+            "shift_phrase": "if price breaks back above it with strength"
         }
 
     if near_upper_band and rsi >= 60:
         return {
-            "bias": "bullish but slightly stretched",
+            "bias": "bullish but a little stretched",
             "trade_word": "buys on pullbacks",
             "opposite_word": "sells",
             "key_level": ema50,
-            "position_phrase": "while momentum remains strong but not overextended",
-            "shift_phrase": "if price starts rejecting the upper Bollinger Band"
+            "position_phrase": "as long as momentum holds and price does not reject the upper band",
+            "shift_phrase": "if the upper Bollinger Band starts rejecting price"
         }
 
     if near_lower_band and rsi <= 40:
         return {
-            "bias": "bearish but slightly stretched",
+            "bias": "bearish but a little stretched",
             "trade_word": "sells on pullbacks",
             "opposite_word": "buys",
             "key_level": ema50,
             "position_phrase": "while sellers keep pressure near the lower band",
-            "shift_phrase": "if price starts bouncing strongly from the lower Bollinger Band"
+            "shift_phrase": "if price starts bouncing strongly from the lower band"
         }
 
     if price >= ema50:
         return {
-            "bias": "mixed but slightly bullish",
+            "bias": "slightly bullish, but not fully confirmed",
             "trade_word": "buys",
             "opposite_word": "sells",
             "key_level": max(ema50, ema200),
             "position_phrase": "while price holds above the short term EMA area",
-            "shift_phrase": "if price fails to hold above that short term support"
+            "shift_phrase": "if price fails to hold that support"
         }
 
     return {
-        "bias": "mixed but slightly bearish",
+        "bias": "slightly bearish, but not fully confirmed",
         "trade_word": "sells",
         "opposite_word": "buys",
         "key_level": max(ema50, ema200),
@@ -611,30 +623,30 @@ def generate_market_message(asset_name, data, interval):
     momentum = momentum_phrase(rsi)
 
     line1_options = [
-        f"✅ {name} is trading around {price_text} on the {visible_interval} timeframe, and the current view is leaning {bias}.",
-        f"✅ Looking at the {visible_interval} chart, {name} is reacting around {price_text}, so this zone matters right now.",
-        f"✅ {name} is sitting near {price_text} on the {visible_interval} timeframe, with the market still building its next move.",
-        f"✅ The {visible_interval} picture on {name} is still developing, with price currently around {price_text}.",
-        f"✅ {name} is moving close to {price_text} on the {visible_interval}, and confirmation is still important before forcing a trade."
+        f"✅ {name} is trading around {price_text} on the {visible_interval} chart, and the move is leaning {bias} for now.",
+        f"✅ Looking at the {visible_interval} chart, {name} is sitting around {price_text}. This is not a level I would ignore.",
+        f"✅ {name} is around {price_text} on the {visible_interval}, and the market is still trying to decide if this move can continue.",
+        f"✅ The {visible_interval} chart on {name} is interesting here, because price is reacting around {price_text}.",
+        f"✅ {name} is moving around {price_text} on the {visible_interval}, and I would rather wait for a clean reaction than force an entry."
     ]
 
     line2_options = [
-        f"✅ EMA 50 is near {ema50_text} and EMA 200 is near {ema200_text}, which gives a cleaner view of the current structure.",
+        f"✅ What I like to watch here is the EMA zone. EMA 50 is near {ema50_text} and EMA 200 is near {ema200_text}, so that area is guiding the short term direction.",
         f"✅ {momentum}",
-        f"✅ Bollinger Bands are sitting between {bb_lower_text} and {bb_upper_text}, so I’m watching for reactions near those areas.",
-        f"✅ Price is close to the Bollinger midline near {bb_middle_text}, which usually means the market still needs a stronger push.",
-        f"✅ The EMA area around {ema50_text} and {ema200_text} is the key zone I’m watching for direction.",
-        f"✅ {momentum} The EMA structure also shows why confirmation matters here."
+        f"✅ Bollinger Bands are sitting between {bb_lower_text} and {bb_upper_text}, so if price starts rejecting either side, that could give the next clue.",
+        f"✅ Price is close to the Bollinger midline near {bb_middle_text}, so I’d like to see a stronger push before trusting the next move.",
+        f"✅ The EMA area around {ema50_text} and {ema200_text} is the zone I’m watching most because price keeps reacting around it.",
+        f"✅ {momentum} The EMA structure also shows why I would wait for a cleaner confirmation here."
     ]
 
     line3_options = [
-        f"✅ For now, {trade_word} make more sense {position_phrase}, but I would change view {shift_phrase}.",
-        f"✅ Bias stays with {trade_word} for now, with {key_level_text} acting as the level that can shift momentum.",
-        f"✅ I would be more comfortable looking for {trade_word}, but only with confirmation around these levels.",
-        f"✅ At the moment, {trade_word} still look cleaner, while {opposite_word} need a stronger break before looking attractive.",
-        f"✅ If {name} respects this area again, {trade_word} can stay in play, but a clean break changes the picture.",
-        f"✅ Overall, I would keep focus on {trade_word} for now, while watching {key_level_text} as the level that can change the bias.",
-        f"✅ {context} For now, {trade_word} still look like the cleaner side unless the structure changes."
+        f"✅ For me, {trade_word} look cleaner {position_phrase}, but I would change view {shift_phrase}.",
+        f"✅ Bias stays with {trade_word} for now, but {key_level_text} is the level that can change the picture.",
+        f"✅ I would still be more comfortable looking for {trade_word}, but only if the market confirms around these levels.",
+        f"✅ At the moment, {trade_word} look better, while {opposite_word} need a stronger break before I would take them seriously.",
+        f"✅ If {name} respects this area again, {trade_word} can stay in play, but a clean break would change the plan.",
+        f"✅ Overall, I would keep focus on {trade_word} for now, while watching {key_level_text} as the level that can shift momentum.",
+        f"✅ {context}"
     ]
 
     return f"**🔔 Market Update**\n\n{random.choice(line1_options)}\n\n{random.choice(line2_options)}\n\n{random.choice(line3_options)}"
@@ -645,16 +657,16 @@ def generate_engagement_reply(asset_name, interval):
     visible_interval = human_interval(interval)
 
     replies = [
-        f"What do you guys think on {name} here, bullish or bearish from this zone?",
-        f"Team, would you wait for confirmation on {name} or are you already seeing the move?",
-        f"Is everyone seeing the same structure on the {visible_interval} chart, or would you wait?",
-        f"Would you prefer buys or sells on {name} from this area?",
-        f"Interesting zone on {name}. Are you leaning with the trend or waiting for a cleaner break?",
-        f"Who is watching this {visible_interval} setup closely?",
-        f"Does this look like continuation to you, or a possible reversal area?",
-        f"Let’s hear your thoughts, would you trade this or wait for more confirmation?",
-        f"From this level, are you more confident with buys or sells?",
-        f"Good learning setup here. What would you need to see before entering?"
+        f"What do you guys think on {name} here, bullish or bearish? 😊",
+        f"Team, would you wait for confirmation here or take the move? 😊",
+        f"Is everyone seeing the same thing on the {visible_interval} chart, or would you wait? 😊",
+        f"Would you prefer buys or sells from this zone? 😊",
+        f"Interesting area on {name}. Continuation or reversal from here? 😊",
+        f"Who is watching this {visible_interval} setup closely? 😊",
+        f"Does this look like continuation to you, or a possible reversal area? 😊",
+        f"Let’s hear your thoughts, would you trade this or wait for more confirmation? 😊",
+        f"From this level, are you more confident with buys or sells? 😊",
+        f"Good learning setup here. What would you need to see before entering? 😊"
     ]
 
     return random.choice(replies)
@@ -1002,6 +1014,7 @@ def health():
         "engagement_reply_delay_minutes": "12 to 18",
         "duplicate_loop_protection": True,
         "minimum_chart_gap_minutes": 25,
+        "wording_style": "more natural human trader wording",
         "safe_test_saved_messages": "/send_saved_test",
         "safe_chart_preview": "/preview_chart",
         "safe_text_preview": "/preview_analysis"

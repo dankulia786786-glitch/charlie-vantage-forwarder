@@ -39,7 +39,7 @@ broadcaster_start_lock = threading.Lock()
 rotation_index = 0
 last_chart_sent_at = 0.0
 
-MIN_CHART_GAP_SECONDS = 25 * 60
+MIN_CHART_GAP_SECONDS = 90 * 60
 
 
 def run_loop():
@@ -770,7 +770,7 @@ def choose_asset_from_query():
 
 
 def choose_wait_minutes():
-    return random.choice([30, 45])
+    return random.choice([120, 150, 180])
 
 
 def choose_engagement_delay_minutes():
@@ -1028,10 +1028,10 @@ def health():
         "chart_img_enabled": CHART_IMG_KEY != "",
         "twelve_data_enabled": TWELVE_DATA_KEY != "",
         "rotation": "Gold, BTC, USOIL",
-        "chart_post_interval_minutes": "30 or 45",
+        "chart_post_interval_minutes": "2 to 3 hours",
         "engagement_reply_delay_minutes": "12 to 18",
         "duplicate_loop_protection": True,
-        "minimum_chart_gap_minutes": 25,
+        "minimum_chart_gap_minutes": 90,
         "wording_style": "natural human trader wording with personal closing lines",
         "safe_test_saved_messages": "/send_saved_test",
         "safe_chart_preview": "/preview_chart",

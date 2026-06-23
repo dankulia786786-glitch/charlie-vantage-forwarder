@@ -7,7 +7,7 @@ import time
 import requests
 import io
 import statistics
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, has_request_context
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
@@ -526,6 +526,20 @@ def momentum_phrase(rsi):
     return f"RSI is around {rsi}, so sellers have momentum, but price is also getting close to an oversold area. I would be careful entering too late."
 
 
+def personal_closing_line():
+    closings = [
+        "Hope this helps you understand the setup better 😊\nI’ll keep sharing more updates like this throughout the day.",
+        "Hope this gives you a clearer view of the market 😊\nI’ll keep watching the next reaction closely.",
+        "Hope this helps, team 😊\nI’ll keep updating you as the structure develops.",
+        "Hope this makes the setup easier to read 😊\nI’ll keep sharing the important levels as they form.",
+        "Hope this helps you read the move better 😊\nI’ll keep posting clean updates when the market gives us something useful.",
+        "Hope this gives everyone a better idea of what I’m watching 😊\nI’ll keep you updated as price reacts.",
+        "Hope this helps you understand why this zone matters 😊\nI’ll keep sharing more market updates during the day."
+    ]
+
+    return random.choice(closings)
+
+
 def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
     above_50 = price > ema50
     above_200 = price > ema200
@@ -621,6 +635,7 @@ def generate_market_message(asset_name, data, interval):
 
     context = asset_context(asset_name)
     momentum = momentum_phrase(rsi)
+    closing = personal_closing_line()
 
     line1_options = [
         f"✅ {name} is trading around {price_text} on the {visible_interval} chart, and the move is leaning {bias} for now.",
@@ -649,7 +664,7 @@ def generate_market_message(asset_name, data, interval):
         f"✅ {context}"
     ]
 
-    return f"**🔔 Market Update**\n\n{random.choice(line1_options)}\n\n{random.choice(line2_options)}\n\n{random.choice(line3_options)}"
+    return f"**🔔 Market Update**\n\n{random.choice(line1_options)}\n\n{random.choice(line2_options)}\n\n{random.choice(line3_options)}\n\n{closing}"
 
 
 def generate_engagement_reply(asset_name, interval):
@@ -703,6 +718,9 @@ def choose_asset():
 
 
 def choose_asset_from_query():
+    if not has_request_context():
+        return choose_asset()
+
     requested_asset = request.args.get("asset", "").lower().strip()
     requested_interval = request.args.get("interval", "").lower().strip()
 
@@ -1014,7 +1032,7 @@ def health():
         "engagement_reply_delay_minutes": "12 to 18",
         "duplicate_loop_protection": True,
         "minimum_chart_gap_minutes": 25,
-        "wording_style": "more natural human trader wording",
+        "wording_style": "natural human trader wording with personal closing lines",
         "safe_test_saved_messages": "/send_saved_test",
         "safe_chart_preview": "/preview_chart",
         "safe_text_preview": "/preview_analysis"

@@ -33,8 +33,13 @@ ENABLE_GROUP_SEND = os.environ.get("ENABLE_GROUP_SEND", "false").lower() == "tru
 client = None
 loop = asyncio.new_event_loop()
 phone_code_hash = None
+
 broadcaster_running = False
+broadcaster_start_lock = threading.Lock()
 rotation_index = 0
+last_chart_sent_at = 0.0
+
+MIN_CHART_GAP_SECONDS = 25 * 60
 
 
 def run_loop():
@@ -463,18 +468,12 @@ def price_format(asset_name, price):
     if asset_name == "bitcoin":
         return f"{price:,.0f}"
 
-    if asset_name == "oil":
-        return f"{price:.2f}"
-
     return f"{price:.2f}"
 
 
 def level_format(asset_name, level):
     if asset_name == "bitcoin":
         return f"{level:,.0f}"
-
-    if asset_name == "oil":
-        return f"{level:.2f}"
 
     return f"{level:.2f}"
 
@@ -497,6 +496,22 @@ def asset_context(asset_name):
     }
 
     return mapping.get(asset_name, "The market is moving around an important zone, so confirmation matters.")
+
+
+def momentum_phrase(rsi):
+    if rsi >= 70:
+        return f"RSI is around {rsi}, which shows the market is stretched into an overbought area, so I would be careful chasing late entries."
+
+    if rsi >= 55:
+        return f"RSI is around {rsi}, which shows buyers still have momentum without the chart looking too stretched yet."
+
+    if rsi >= 45:
+        return f"RSI is around {rsi}, which shows momentum is fairly balanced and the next clean break matters."
+
+    if rsi >= 35:
+        return f"RSI is around {rsi}, which shows sellers still have some pressure, but confirmation is still important."
+
+    return f"RSI is around {rsi}, which shows sellers have momentum, but price is getting close to an oversold area."
 
 
 def bias_details(asset_name, price, ema50, ema200, rsi, bb_upper, bb_lower):
@@ -593,6 +608,7 @@ def generate_market_message(asset_name, data, interval):
     shift_phrase = details["shift_phrase"]
 
     context = asset_context(asset_name)
+    momentum = momentum_phrase(rsi)
 
     line1_options = [
         f"✅ {name} is trading around {price_text} on the {visible_interval} timeframe, and the current view is leaning {bias}.",
@@ -604,11 +620,11 @@ def generate_market_message(asset_name, data, interval):
 
     line2_options = [
         f"✅ EMA 50 is near {ema50_text} and EMA 200 is near {ema200_text}, which gives a cleaner view of the current structure.",
-        f"✅ RSI is around {rsi}, so momentum is not too stretched and the next clean break matters.",
+        f"✅ {momentum}",
         f"✅ Bollinger Bands are sitting between {bb_lower_text} and {bb_upper_text}, so I’m watching for reactions near those areas.",
         f"✅ Price is close to the Bollinger midline near {bb_middle_text}, which usually means the market still needs a stronger push.",
         f"✅ The EMA area around {ema50_text} and {ema200_text} is the key zone I’m watching for direction.",
-        f"✅ RSI near {rsi} with price around the EMA zone tells me this still needs clean confirmation."
+        f"✅ {momentum} The EMA structure also shows why confirmation matters here."
     ]
 
     line3_options = [
@@ -622,6 +638,26 @@ def generate_market_message(asset_name, data, interval):
     ]
 
     return f"**🔔 Market Update**\n\n{random.choice(line1_options)}\n\n{random.choice(line2_options)}\n\n{random.choice(line3_options)}"
+
+
+def generate_engagement_reply(asset_name, interval):
+    name = display_asset(asset_name)
+    visible_interval = human_interval(interval)
+
+    replies = [
+        f"What do you guys think on {name} here, bullish or bearish from this zone?",
+        f"Team, would you wait for confirmation on {name} or are you already seeing the move?",
+        f"Is everyone seeing the same structure on the {visible_interval} chart, or would you wait?",
+        f"Would you prefer buys or sells on {name} from this area?",
+        f"Interesting zone on {name}. Are you leaning with the trend or waiting for a cleaner break?",
+        f"Who is watching this {visible_interval} setup closely?",
+        f"Does this look like continuation to you, or a possible reversal area?",
+        f"Let’s hear your thoughts, would you trade this or wait for more confirmation?",
+        f"From this level, are you more confident with buys or sells?",
+        f"Good learning setup here. What would you need to see before entering?"
+    ]
+
+    return random.choice(replies)
 
 
 def rotation_assets():
@@ -704,7 +740,11 @@ def choose_asset_from_query():
 
 
 def choose_wait_minutes():
-    return 30
+    return random.choice([30, 45])
+
+
+def choose_engagement_delay_minutes():
+    return random.choice([12, 15, 18])
 
 
 async def send_message_to_entity(entity_target, message_text, chart_image=None, reply_to=None):
@@ -713,7 +753,7 @@ async def send_message_to_entity(entity_target, message_text, chart_image=None, 
     try:
         if not client or not await client.is_user_authorized():
             logger.error("Not logged in")
-            return False
+            return None
 
         entity = await client.get_entity(entity_target)
 
@@ -725,7 +765,7 @@ async def send_message_to_entity(entity_target, message_text, chart_image=None, 
             kwargs["reply_to"] = reply_to
 
         if chart_image:
-            await client.send_file(
+            sent = await client.send_file(
                 entity,
                 chart_image,
                 caption=message_text,
@@ -733,46 +773,73 @@ async def send_message_to_entity(entity_target, message_text, chart_image=None, 
                 **kwargs
             )
         else:
-            await client.send_message(
+            sent = await client.send_message(
                 entity,
                 message_text,
                 **kwargs
             )
 
         logger.info("Message sent")
-        return True
+        return sent
 
     except Exception as e:
         logger.error(f"Send error: {e}")
-        return False
+        return None
 
 
 async def send_to_saved_messages(message_text, chart_image=None):
     return await send_message_to_entity("me", message_text, chart_image=chart_image)
 
 
-async def send_to_vantage(message_text, chart_image=None):
+async def send_to_vantage(message_text, chart_image=None, reply_to=None):
     if not ENABLE_GROUP_SEND:
         logger.warning("Group sending is locked")
-        return False
+        return None
 
     if not VANTAGE_GROUP_ID:
         logger.error("VANTAGE_GROUP_ID missing")
-        return False
+        return None
 
-    if not chart_image:
-        logger.error("Chart image missing. Refusing to send to group.")
-        return False
+    if chart_image is None and reply_to is None:
+        logger.error("Chart image missing. Refusing to send fresh group update.")
+        return None
 
     return await send_message_to_entity(
         VANTAGE_GROUP_ID,
         message_text,
         chart_image=chart_image,
-        reply_to=VANTAGE_TOPIC_ID if VANTAGE_TOPIC_ID and VANTAGE_TOPIC_ID > 0 else None
+        reply_to=reply_to if reply_to else VANTAGE_TOPIC_ID if VANTAGE_TOPIC_ID and VANTAGE_TOPIC_ID > 0 else None
     )
 
 
+async def send_engagement_reply_later(asset_name, interval, reply_to_message_id):
+    if not ENABLE_GROUP_SEND:
+        return
+
+    delay_minutes = choose_engagement_delay_minutes()
+    logger.info(f"Engagement reply scheduled in {delay_minutes} minutes")
+
+    await asyncio.sleep(delay_minutes * 60)
+
+    if not broadcaster_running:
+        logger.info("Engagement reply skipped because broadcaster stopped")
+        return
+
+    reply_text = generate_engagement_reply(asset_name, interval)
+
+    sent = await send_to_vantage(
+        reply_text,
+        chart_image=None,
+        reply_to=reply_to_message_id
+    )
+
+    if sent:
+        logger.info("Engagement reply sent")
+
+
 async def create_market_update(send_mode="preview"):
+    global last_chart_sent_at
+
     asset = choose_asset_from_query()
     data = get_live_data(asset["symbol"], asset["interval"])
 
@@ -801,15 +868,15 @@ async def create_market_update(send_mode="preview"):
                 "sent": "not sent"
             }
 
-        success = await send_to_saved_messages(message, chart_image=chart_result["image"])
+        sent = await send_to_saved_messages(message, chart_image=chart_result["image"])
 
         return {
-            "ok": success,
+            "ok": bool(sent),
             "asset": asset,
             "data": data,
             "message": message,
             "chart_image": chart_status,
-            "sent": "saved_messages" if success else "failed"
+            "sent": "saved_messages" if sent else "failed"
         }
 
     if send_mode == "vantage":
@@ -836,15 +903,31 @@ async def create_market_update(send_mode="preview"):
                 "sent": "not sent because chart image is missing"
             }
 
-        success = await send_to_vantage(message, chart_image=chart_result["image"])
+        sent = await send_to_vantage(message, chart_image=chart_result["image"])
+
+        if sent:
+            last_chart_sent_at = time.time()
+
+            sent_id = sent.id if hasattr(sent, "id") else None
+
+            if sent_id:
+                asyncio.create_task(
+                    send_engagement_reply_later(
+                        asset["name"],
+                        asset["interval"],
+                        sent_id
+                    )
+                )
 
         return {
-            "ok": success,
+            "ok": bool(sent),
             "asset": asset,
             "data": data,
             "message": message,
             "chart_image": chart_status,
-            "sent": "vantage" if success else "failed"
+            "message_id": sent.id if sent and hasattr(sent, "id") else None,
+            "engagement_reply": "scheduled" if sent else "not scheduled",
+            "sent": "vantage" if sent else "failed"
         }
 
     return {
@@ -857,6 +940,20 @@ async def create_market_update(send_mode="preview"):
     }
 
 
+async def wait_if_too_soon():
+    global last_chart_sent_at
+
+    if last_chart_sent_at <= 0:
+        return
+
+    seconds_since_last = time.time() - last_chart_sent_at
+
+    if seconds_since_last < MIN_CHART_GAP_SECONDS:
+        wait_seconds = int(MIN_CHART_GAP_SECONDS - seconds_since_last)
+        logger.info(f"Too soon since last chart. Waiting {wait_seconds} seconds.")
+        await asyncio.sleep(wait_seconds)
+
+
 async def broadcast_loop():
     global broadcaster_running
 
@@ -865,21 +962,27 @@ async def broadcast_loop():
         broadcaster_running = False
         return
 
-    broadcaster_running = True
     logger.info("Auto broadcaster started")
 
     while broadcaster_running:
         try:
+            await wait_if_too_soon()
+
+            if not broadcaster_running:
+                break
+
             result = await create_market_update(send_mode="vantage")
             logger.info(f"Broadcast result: {result}")
 
             wait_minutes = choose_wait_minutes()
-            logger.info(f"Next message in {wait_minutes} minutes")
+            logger.info(f"Next chart message in {wait_minutes} minutes")
             await asyncio.sleep(wait_minutes * 60)
 
         except Exception as e:
             logger.error(f"Broadcaster error: {e}")
             await asyncio.sleep(60)
+
+    logger.info("Broadcaster loop exited")
 
 
 @app.route("/", methods=["GET"])
@@ -895,7 +998,10 @@ def health():
         "chart_img_enabled": CHART_IMG_KEY != "",
         "twelve_data_enabled": TWELVE_DATA_KEY != "",
         "rotation": "Gold, BTC, USOIL",
-        "post_interval_minutes": 30,
+        "chart_post_interval_minutes": "30 or 45",
+        "engagement_reply_delay_minutes": "12 to 18",
+        "duplicate_loop_protection": True,
+        "minimum_chart_gap_minutes": 25,
         "safe_test_saved_messages": "/send_saved_test",
         "safe_chart_preview": "/preview_chart",
         "safe_text_preview": "/preview_analysis"
@@ -906,16 +1012,18 @@ def health():
 def start_broadcaster():
     global broadcaster_running
 
-    if broadcaster_running:
-        return jsonify({"status": "Already running"})
+    with broadcaster_start_lock:
+        if broadcaster_running:
+            return jsonify({"status": "Already running"})
 
-    if not ENABLE_GROUP_SEND:
-        return jsonify({
-            "status": "blocked",
-            "reason": "ENABLE_GROUP_SEND is false, so the group is protected"
-        }), 403
+        if not ENABLE_GROUP_SEND:
+            return jsonify({
+                "status": "blocked",
+                "reason": "ENABLE_GROUP_SEND is false, so the group is protected"
+            }), 403
 
-    asyncio.run_coroutine_threadsafe(broadcast_loop(), loop)
+        broadcaster_running = True
+        asyncio.run_coroutine_threadsafe(broadcast_loop(), loop)
 
     return jsonify({"status": "Broadcaster started"})
 
@@ -1000,8 +1108,8 @@ def test_message():
     future = asyncio.run_coroutine_threadsafe(send_to_saved_messages(message), loop)
 
     try:
-        success = future.result(timeout=20)
-        return jsonify({"status": "Sent to Saved Messages" if success else "Failed"})
+        sent = future.result(timeout=20)
+        return jsonify({"status": "Sent to Saved Messages" if sent else "Failed"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1053,6 +1161,8 @@ def forward_tp():
 
 
 def start_broadcaster_on_boot():
+    global broadcaster_running
+
     if not AUTO_START_BROADCASTER:
         logger.info("Auto start broadcaster disabled")
         return
@@ -1062,7 +1172,15 @@ def start_broadcaster_on_boot():
         return
 
     time.sleep(10)
-    asyncio.run_coroutine_threadsafe(broadcast_loop(), loop)
+
+    with broadcaster_start_lock:
+        if broadcaster_running:
+            logger.info("Broadcaster already running on boot")
+            return
+
+        broadcaster_running = True
+        asyncio.run_coroutine_threadsafe(broadcast_loop(), loop)
+
     logger.info("Broadcaster auto started on boot")
 
 

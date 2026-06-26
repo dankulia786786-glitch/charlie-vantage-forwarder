@@ -36,7 +36,7 @@ phone_code_hash = None
 
 broadcaster_running = False
 broadcaster_start_lock = threading.Lock()
-last_sent_at = 0.0
+last_chart_sent_at = 0.0
 
 BROADCAST_INTERVAL_MINUTES = 25
 
@@ -84,49 +84,64 @@ except Exception as e:
 def calculate_ema(values, period):
     if not values:
         return 0.0
+
     if len(values) < period:
         return values[-1]
+
     multiplier = 2 / (period + 1)
     ema = sum(values[:period]) / period
+
     for price in values[period:]:
         ema = (price - ema) * multiplier + ema
+
     return ema
 
 
 def calculate_rsi(values, period=14):
     if not values or len(values) <= period:
         return 50.0
+
     gains = []
     losses = []
+
     for i in range(1, period + 1):
         change = values[i] - values[i - 1]
         gains.append(max(change, 0))
         losses.append(abs(min(change, 0)))
+
     avg_gain = sum(gains) / period
     avg_loss = sum(losses) / period
+
     for i in range(period + 1, len(values)):
         change = values[i] - values[i - 1]
         gain = max(change, 0)
         loss = abs(min(change, 0))
+
         avg_gain = (avg_gain * (period - 1) + gain) / period
         avg_loss = (avg_loss * (period - 1) + loss) / period
+
     if avg_loss == 0:
         return 100.0
+
     rs = avg_gain / avg_loss
+
     return 100 - (100 / (1 + rs))
 
 
 def calculate_bollinger(values, period=20):
     if not values or len(values) < period:
         last_price = values[-1] if values else 0.0
+
         return {
             "bb_middle": last_price,
             "bb_upper": last_price,
             "bb_lower": last_price
         }
+
     recent = values[-period:]
     middle = sum(recent) / period
     stdev = statistics.pstdev(recent)
+
     return {
         "bb_middle": middle,
         "bb_upper": middle + (2 * stdev),
@@ -137,11 +152,58 @@ def calculate_bollinger(values, period=20):
 def get_support_resistance(values, window=20):
     if not values or len(values) < window:
         return {"support": values[-1] if values else 0, "resistance": values[-1] if values else 0}
-    
     recent = values[-window:]
     support = min(recent)
     resistance = max(recent)
     return {"support": support, "resistance": resistance}
+
+
+def yahoo_symbol(symbol):
+    mapping = {
+        "XAU/USD": "GC=F",
+        "BTC/USD": "BTC-USD",
+    }
+
+    return mapping.get(symbol, symbol)
+
+
+def yahoo_interval(interval):
+    mapping = {
+        "1min": "1m",
+        "5min": "5m",
+        "15min": "15m",
+        "30min": "30m",
+        "1h": "1h",
+        "4h": "1h",
+    }
+
+    return mapping.get(interval, "1h")
+
+
+def chart_interval(interval):
+    mapping = {
+        "1min": "1m",
+        "5min": "5m",
+        "15min": "15m",
+        "30min": "30m",
+        "1h": "1h",
+        "4h": "4h",
+    }
+
+    return mapping.get(interval, "1h")
+
+
+def human_interval(interval):
+    mapping = {
+        "1min": "1m",
+        "5min": "5m",
+        "15min": "15m",
+        "30min": "30m",
+        "1h": "1h",
+        "4h": "4h",
+    }
+
+    return mapping.get(interval, interval)
 
 
 def get_twelve_data_interval(interval):
@@ -153,6 +215,7 @@ def get_twelve_data_interval(interval):
         "1h": "1h",
         "4h": "4h",
     }
+
     return mapping.get(interval, "1h")
 
 
@@ -160,7 +223,9 @@ def get_live_data_from_twelve_data(symbol, interval):
     try:
         if not TWELVE_DATA_KEY:
             return None
+
         td_interval = get_twelve_data_interval(interval)
+
         response = requests.get(
             "https://api.twelvedata.com/time_series",
             params={
@@ -171,25 +236,33 @@ def get_live_data_from_twelve_data(symbol, interval):
             },
             timeout=15
         )
+
         data = response.json()
         values = data.get("values", [])
+
         if not values:
-            logger.warning(f"Twelve Data returned no values for {symbol}")
+            logger.warning(f"Twelve Data returned no values for {symbol}: {data}")
             return None
+
         candles = list(reversed(values))
         closes = []
+
         for candle in candles:
             close_value = candle.get("close")
+
             if close_value is not None:
                 closes.append(float(close_value))
+
         if not closes:
             return None
+
         price = closes[-1]
         ema50 = calculate_ema(closes, 50) if len(closes) >= 50 else price
         ema200 = calculate_ema(closes, 200) if len(closes) >= 200 else price
         rsi = calculate_rsi(closes, 14)
         bb = calculate_bollinger(closes, 20)
         sr = get_support_resistance(closes, 20)
+
         return {
             "price": round(price, 4),
             "rsi": round(rsi, 1),
@@ -202,6 +275,7 @@ def get_live_data_from_twelve_data(symbol, interval):
             "resistance": round(sr["resistance"], 4),
             "source": "twelve_data"
         }
+
     except Exception as e:
         logger.error(f"Twelve Data error for {symbol}: {e}")
         return None
@@ -209,40 +283,48 @@ def get_live_data_from_twelve_data(symbol, interval):
 
 def get_live_data_from_yahoo(symbol, interval):
     try:
-        symbol_map = {"XAU/USD": "GC=F", "BTC/USD": "BTC-USD"}
-        y_symbol = symbol_map.get(symbol, symbol)
-        
-        interval_map = {
-            "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
-            "1h": "1h", "4h": "1h"
-        }
-        y_interval = interval_map.get(interval, "1h")
-        
+        y_symbol = yahoo_symbol(symbol)
+        y_interval = yahoo_interval(interval)
+
         if y_interval in ["1m", "5m", "15m", "30m"]:
             range_value = "5d"
         elif y_interval == "1h":
             range_value = "30d"
         else:
             range_value = "1y"
-        
+
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{y_symbol}"
-        params = {"interval": y_interval, "range": range_value}
-        headers = {"User-Agent": "Mozilla/5.0"}
+
+        params = {
+            "interval": y_interval,
+            "range": range_value,
+        }
+
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
         response = requests.get(url, params=params, headers=headers, timeout=15)
         data = response.json()
+
         result = data.get("chart", {}).get("result", [])
+
         if not result:
             return None
+
         closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
         closes = [float(x) for x in closes if x is not None]
+
         if not closes:
             return None
+
         price = closes[-1]
         ema50 = calculate_ema(closes, 50) if len(closes) >= 50 else price
         ema200 = calculate_ema(closes, 200) if len(closes) >= 200 else price
         rsi = calculate_rsi(closes, 14)
         bb = calculate_bollinger(closes, 20)
         sr = get_support_resistance(closes, 20)
+
         return {
             "price": round(price, 4),
             "rsi": round(rsi, 1),
@@ -255,6 +337,7 @@ def get_live_data_from_yahoo(symbol, interval):
             "resistance": round(sr["resistance"], 4),
             "source": "yahoo"
         }
+
     except Exception as e:
         logger.error(f"Yahoo data error for {symbol}: {e}")
         return None
@@ -262,27 +345,26 @@ def get_live_data_from_yahoo(symbol, interval):
 
 def get_live_data(symbol, interval):
     data = get_live_data_from_twelve_data(symbol, interval)
+
     if data:
         return data
+
     return get_live_data_from_yahoo(symbol, interval)
 
 
 def tradingview_symbol(asset_name):
-    mapping = {"gold": "OANDA:XAUUSD", "bitcoin": "COINBASE:BTCUSD"}
-    return mapping.get(asset_name, "OANDA:XAUUSD")
-
-
-def chart_interval(interval):
     mapping = {
-        "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
-        "1h": "1h", "4h": "4h"
+        "gold": "OANDA:XAUUSD",
+        "bitcoin": "COINBASE:BTCUSD",
     }
-    return mapping.get(interval, "1h")
+
+    return mapping.get(asset_name, "OANDA:XAUUSD")
 
 
 def chart_asset_config(asset_name, interval):
     symbol = tradingview_symbol(asset_name)
     interval_value = chart_interval(interval)
+
     payload = {
         "symbol": symbol,
         "interval": interval_value,
@@ -294,80 +376,127 @@ def chart_asset_config(asset_name, interval):
             "showStudyLastValue": True,
             "showSeriesLastValue": True,
             "showSeriesOHLC": True,
+            "showBarChange": True,
+            "showLegendValues": True,
+            "mainPaneHeight": 420
         },
         "studies": [
-            {"name": "Moving Average Exponential", "input": {"length": 50, "source": "close"},
-             "override": {"Plot.linewidth": 2, "Plot.plottype": "line", "Plot.color": "rgb(255,193,7)"}},
-            {"name": "Moving Average Exponential", "input": {"length": 200, "source": "close"},
-             "override": {"Plot.linewidth": 2, "Plot.plottype": "line", "Plot.color": "rgb(33,150,243)"}},
-            {"name": "Relative Strength Index", "input": {"length": 14, "source": "close"}}
+            {
+                "name": "Moving Average Exponential",
+                "input": {
+                    "length": 50,
+                    "source": "close",
+                    "offset": 0,
+                    "smoothingLine": "SMA",
+                    "smoothingLength": 9
+                },
+                "override": {
+                    "Plot.linewidth": 2,
+                    "Plot.plottype": "line",
+                    "Plot.color": "rgb(255,193,7)"
+                }
+            },
+            {
+                "name": "Moving Average Exponential",
+                "input": {
+                    "length": 200,
+                    "source": "close",
+                    "offset": 0,
+                    "smoothingLine": "SMA",
+                    "smoothingLength": 9
+                },
+                "override": {
+                    "Plot.linewidth": 2,
+                    "Plot.plottype": "line",
+                    "Plot.color": "rgb(33,150,243)"
+                }
+            },
+            {
+                "name": "Relative Strength Index",
+                "input": {
+                    "length": 14,
+                    "source": "close"
+                }
+            }
         ]
     }
+
     return payload
 
 
 def get_chart_image_result(asset_name, interval):
     try:
         if not CHART_IMG_KEY:
-            return {"ok": False, "image": None, "error": "CHART_IMG_KEY missing"}
+            return {
+                "ok": False,
+                "image": None,
+                "error": "CHART_IMG_KEY missing"
+            }
+
         payload = chart_asset_config(asset_name, interval)
+
         headers = {
             "x-api-key": CHART_IMG_KEY,
             "content-type": "application/json",
             "User-Agent": "Mozilla/5.0"
         }
+
         response = requests.post(
             "https://api.chart-img.com/v2/tradingview/advanced-chart",
             json=payload,
             headers=headers,
             timeout=75
         )
+
         content_type = response.headers.get("content-type", "")
+
         if response.status_code == 200 and "image" in content_type:
             image = io.BytesIO(response.content)
             image.name = f"{asset_name}_chart.png"
-            return {"ok": True, "image": image, "error": None}
-        return {"ok": False, "image": None, "error": f"Chart error {response.status_code}"}
+
+            return {
+                "ok": True,
+                "image": image,
+                "error": None
+            }
+
+        return {
+            "ok": False,
+            "image": None,
+            "error": f"Chart IMG error {response.status_code}: {response.text[:500]}"
+        }
+
     except Exception as e:
-        logger.error(f"Chart image error: {e}")
-        return {"ok": False, "image": None, "error": str(e)}
+        logger.error(f"Chart image fetch error: {e}")
+
+        return {
+            "ok": False,
+            "image": None,
+            "error": str(e)
+        }
 
 
 def price_format(asset_name, price):
     if asset_name == "bitcoin":
         return f"${price:,.0f}"
+
     return f"${price:,.2f}"
 
 
 def level_format(asset_name, level):
     if asset_name == "bitcoin":
         return f"{level:,.0f}"
+
     return f"{level:.2f}"
 
 
 def display_asset(asset_name):
-    mapping = {"gold": "Gold", "bitcoin": "Bitcoin"}
-    return mapping.get(asset_name, asset_name.upper())
-
-
-def human_interval(interval):
     mapping = {
-        "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
-        "1h": "1h", "4h": "4h"
+        "gold": "Gold",
+        "bitcoin": "Bitcoin",
     }
-    return mapping.get(interval, interval)
 
-
-def choose_asset():
-    rand = random.random()
-    if rand < 0.7:
-        return {"symbol": "XAU/USD", "name": "gold"}
-    else:
-        return {"symbol": "BTC/USD", "name": "bitcoin"}
-
-
-def choose_timeframe():
-    return random.choice(["1min", "5min", "15min", "30min", "1h", "4h"])
+    return mapping.get(asset_name, asset_name.upper())
 
 
 def get_price_phrasing(asset_name, price):
@@ -390,151 +519,74 @@ def should_mention_support(price, support, resistance):
     return diff_support < diff_resistance
 
 
-def determine_market_bias(price, ema50, ema200, rsi, support, resistance):
-    bullish_count = 0
-    bearish_count = 0
-    if price > ema50:
-        bullish_count += 1
-    else:
-        bearish_count += 1
-    if price > ema200:
-        bullish_count += 1
-    else:
-        bearish_count += 1
-    if rsi > 55:
-        bullish_count += 1
-    elif rsi < 45:
-        bearish_count += 1
-    if bullish_count > bearish_count:
-        return "bullish"
-    elif bearish_count > bullish_count:
-        return "bearish"
-    else:
-        return "neutral"
-
-
-def generate_message_type_a(asset_name, price, timeframe, support, resistance):
+def generate_market_message(asset_name, data, interval):
     name = display_asset(asset_name)
-    price_phrase = get_price_phrasing(asset_name, price)
+    price_phrase = get_price_phrasing(asset_name, data["price"])
     
-    if should_mention_support(price, support, resistance):
-        messages = [
-            f"✅ {name} is {price_phrase} on the {timeframe} ➡️ Support holding at {level_format(asset_name, support)} — that's your key level\n✅ If it breaks below, sellers are in control. Watch that {level_format(asset_name, support)} closely.",
-            f"✅ {name} {price_phrase} on {timeframe} ➡️ Support is at {level_format(asset_name, support)} and it's the floor\n✅ A close below that level changes the picture. Stay alert to that break.",
-            f"✅ Price is {price_phrase} on the {timeframe} ➡️ Support around {level_format(asset_name, support)} is holding the line\n✅ Watch how {name} reacts here. If it holds, upside could continue.",
-        ]
-    else:
-        messages = [
-            f"✅ {name} {price_phrase} on the {timeframe} ➡️ Resistance is just above at {level_format(asset_name, resistance)}\n✅ If it breaks that level, next target is in play. Watch for the break.",
-            f"✅ {name} is {price_phrase} on {timeframe} ➡️ Resistance at {level_format(asset_name, resistance)} is the hurdle\n✅ Buyers need to push through there. If they do, it's significant.",
-            f"✅ Currently {price_phrase} on the {timeframe} ➡️ {name} facing resistance at {level_format(asset_name, resistance)}\n✅ Watch if it breaks or bounces. That tells us the next move.",
-        ]
-    return random.choice(messages)
-
-
-def generate_message_type_b(asset_name, price, timeframe, rsi, support, resistance):
-    name = display_asset(asset_name)
-    price_phrase = get_price_phrasing(asset_name, price)
-    
-    if rsi >= 65:
-        messages = [
-            f"✅ {name} {price_phrase} on the {timeframe} ➡️ RSI is strong at {int(rsi)}, buyers in control\n✅ Watch for pullbacks to {level_format(asset_name, support)} — that's where we'd want to see buyers step back in.",
-            f"✅ Price {price_phrase} on {timeframe} ➡️ Momentum is high at RSI {int(rsi)}\n✅ This could continue, but watch resistance at {level_format(asset_name, resistance)}. That's where it could get contested.",
-        ]
-    elif rsi <= 40:
-        messages = [
-            f"✅ {name} is {price_phrase} on the {timeframe} ➡️ RSI at {int(rsi)} shows selling pressure\n✅ Support at {level_format(asset_name, support)} matters here. If it holds, we could see a bounce.",
-            f"✅ Price {price_phrase} on {timeframe} ➡️ RSI is {int(rsi)}, which means weakness\n✅ Watch that support level at {level_format(asset_name, support)}. A break would signal more downside.",
-        ]
-    else:
-        messages = [
-            f"✅ {name} {price_phrase} on the {timeframe} ➡️ RSI is neutral at {int(rsi)}\n✅ No clear momentum yet. Next move from support at {level_format(asset_name, support)} or resistance at {level_format(asset_name, resistance)} will tell us.",
-            f"✅ {name} {price_phrase} on {timeframe} ➡️ Momentum is balanced, RSI at {int(rsi)}\n✅ Price could test either side. Watch both {level_format(asset_name, support)} and {level_format(asset_name, resistance)}.",
-        ]
-    return random.choice(messages)
-
-
-def generate_message_type_c(asset_name, price, timeframe, ema50, ema200, support):
-    name = display_asset(asset_name)
-    price_phrase = get_price_phrasing(asset_name, price)
-    
-    if price > ema50 > ema200:
-        messages = [
-            f"✅ {name} is {price_phrase} on the {timeframe} ➡️ Price above both moving averages — bullish setup\n✅ The trend is up. Only break back below the EMAs would change that.",
-            f"✅ Price {price_phrase} on {timeframe} ➡️ Structure is bullish, price above the 50 and 200\n✅ Dips to {level_format(asset_name, support)} would be buying opportunities.",
-        ]
-    elif price < ema50 < ema200:
-        messages = [
-            f"✅ {name} {price_phrase} on the {timeframe} ➡️ Price below both EMAs — bearish structure\n✅ The trend is down. Watch that support at {level_format(asset_name, support)} closely.",
-            f"✅ {price_phrase} on {timeframe} ➡️ Price below moving averages, structure is bearish\n✅ Weakness is the story here. Support at {level_format(asset_name, support)} is key to watch.",
-        ]
-    else:
-        messages = [
-            f"✅ {name} is {price_phrase} on the {timeframe} ➡️ Structure is mixed, in between the EMAs\n✅ Waiting for a clean break. If it takes support at {level_format(asset_name, support)}, we have clarity.",
-            f"✅ Price {price_phrase} on {timeframe} ➡️ No clear direction from the moving averages yet\n✅ Watch how it reacts to {level_format(asset_name, support)}. That will tell us the next move.",
-        ]
-    return random.choice(messages)
-
-
-def generate_message_type_d(asset_name, price, timeframe, bb_upper, bb_lower, support, resistance):
-    name = display_asset(asset_name)
-    price_phrase = get_price_phrasing(asset_name, price)
-    
-    if price >= bb_upper * 0.98:
-        messages = [
-            f"✅ {name} {price_phrase} on the {timeframe} ➡️ Touching the upper band, price is hot\n✅ Watch for pullbacks. Support at {level_format(asset_name, support)} is where pullbacks matter.",
-            f"✅ Price {price_phrase} on {timeframe} ➡️ Upper Bollinger Band is being tested\n✅ Could reject here or break through. That resistance at {level_format(asset_name, resistance)} is important.",
-        ]
-    elif price <= bb_lower * 1.02:
-        messages = [
-            f"✅ {name} is {price_phrase} on the {timeframe} ➡️ Lower band territory, volatility is extended\n✅ Bounces from here can be sharp. Watch resistance at {level_format(asset_name, resistance)} for the pullback target.",
-            f"✅ {price_phrase} on {timeframe} ➡️ At the lower Bollinger Band\n✅ This is usually a bounce zone. Support at {level_format(asset_name, support)} is where the base is.",
-        ]
-    else:
-        messages = [
-            f"✅ {name} {price_phrase} on the {timeframe} ➡️ Normal range, between the bands\n✅ Room to move in either direction. Support at {level_format(asset_name, support)}, resistance at {level_format(asset_name, resistance)}.",
-            f"✅ Price {price_phrase} on {timeframe} ➡️ Comfortable range, volatility is steady\n✅ Watch the key levels. {level_format(asset_name, support)} is support, {level_format(asset_name, resistance)} is resistance.",
-        ]
-    return random.choice(messages)
-
-
-def generate_mentor_message(asset_name, data, interval):
-    name = display_asset(asset_name)
-    price = data["price"]
-    rsi = data["rsi"]
     support = data["support"]
     resistance = data["resistance"]
-    ema50 = data["ema50"]
-    ema200 = data["ema200"]
+    rsi = data["rsi"]
     
-    message_type = random.choice(["A", "B", "C", "D"])
-    
-    if message_type == "A":
-        content = generate_message_type_a(asset_name, price, interval, support, resistance)
-    elif message_type == "B":
-        content = generate_message_type_b(asset_name, price, interval, rsi, support, resistance)
-    elif message_type == "C":
-        content = generate_message_type_c(asset_name, price, interval, ema50, ema200, support)
+    if should_mention_support(data["price"], support, resistance):
+        messages = [
+            f"✅ {name} is {price_phrase} on the {human_interval(interval)} ➡️ Support holding at {level_format(asset_name, support)} — that's your key level\n✅ If it breaks below, sellers are in control. Watch that {level_format(asset_name, support)} closely.",
+            f"✅ {name} {price_phrase} on {human_interval(interval)} ➡️ Support is at {level_format(asset_name, support)} and it's the floor\n✅ A close below that level changes the picture. Stay alert to that break.",
+            f"✅ Price is {price_phrase} on the {human_interval(interval)} ➡️ Support around {level_format(asset_name, support)} is holding the line\n✅ Watch how {name} reacts here. If it holds, upside could continue.",
+        ]
     else:
-        content = generate_message_type_d(asset_name, price, interval, data["bb_upper"], data["bb_lower"], support, resistance)
+        messages = [
+            f"✅ {name} {price_phrase} on the {human_interval(interval)} ➡️ Resistance is just above at {level_format(asset_name, resistance)}\n✅ If it breaks that level, next target is in play. Watch for the break.",
+            f"✅ {name} is {price_phrase} on {human_interval(interval)} ➡️ Resistance at {level_format(asset_name, resistance)} is the hurdle\n✅ Buyers need to push through there. If they do, it's significant.",
+            f"✅ Currently {price_phrase} on the {human_interval(interval)} ➡️ {name} facing resistance at {level_format(asset_name, resistance)}\n✅ Watch if it breaks or bounces. That tells us the next move.",
+        ]
     
-    message = f"🚨 Trade Alert Everyone\n\n{content}"
-    return message
+    return f"🚨 Trade Alert Everyone\n\n{random.choice(messages)}"
 
 
-async def send_message_to_entity(entity_target, message_text, chart_image=None):
+def choose_asset():
+    """70% Gold, 30% Bitcoin"""
+    rand = random.random()
+    if rand < 0.7:
+        return {"symbol": "XAU/USD", "name": "gold", "interval": random.choice(["1min", "5min", "15min", "30min", "1h", "4h"])}
+    else:
+        return {"symbol": "BTC/USD", "name": "bitcoin", "interval": random.choice(["1min", "5min", "15min", "30min", "1h", "4h"])}
+
+
+async def send_message_to_entity(entity_target, message_text, chart_image=None, reply_to=None):
     global client
+
     try:
         if not client or not await client.is_user_authorized():
             logger.error("Not logged in")
             return None
+
         entity = await client.get_entity(entity_target)
+
+        kwargs = {
+            "parse_mode": "md"
+        }
+
+        if reply_to:
+            kwargs["reply_to"] = reply_to
+
         if chart_image:
-            sent = await client.send_file(entity, chart_image, caption=message_text, force_document=False, parse_mode="md")
+            sent = await client.send_file(
+                entity,
+                chart_image,
+                caption=message_text,
+                force_document=False,
+                **kwargs
+            )
         else:
-            sent = await client.send_message(entity, message_text, parse_mode="md")
-        logger.info("Message sent successfully")
+            sent = await client.send_message(
+                entity,
+                message_text,
+                **kwargs
+            )
+
+        logger.info("Message sent")
         return sent
+
     except Exception as e:
         logger.error(f"Send error: {e}")
         return None
@@ -544,110 +596,147 @@ async def send_to_saved_messages(message_text, chart_image=None):
     return await send_message_to_entity("me", message_text, chart_image=chart_image)
 
 
-async def send_to_vantage(message_text, chart_image=None):
+async def send_to_vantage(message_text, chart_image=None, reply_to=None):
     if not ENABLE_GROUP_SEND:
         logger.warning("Group sending is locked")
         return None
+
     if not VANTAGE_GROUP_ID:
         logger.error("VANTAGE_GROUP_ID missing")
         return None
-    return await send_message_to_entity(VANTAGE_GROUP_ID, message_text, chart_image=chart_image)
+
+    if chart_image is None and reply_to is None:
+        logger.error("Chart image missing. Refusing to send fresh group update.")
+        return None
+
+    return await send_message_to_entity(
+        VANTAGE_GROUP_ID,
+        message_text,
+        chart_image=chart_image,
+        reply_to=reply_to if reply_to else VANTAGE_TOPIC_ID if VANTAGE_TOPIC_ID and VANTAGE_TOPIC_ID > 0 else None
+    )
 
 
 async def create_market_update(send_mode="preview"):
+    global last_chart_sent_at
+
     asset = choose_asset()
-    timeframe = choose_timeframe()
-    data = get_live_data(asset["symbol"], timeframe)
-    
+    data = get_live_data(asset["symbol"], asset["interval"])
+
     if not data or data["price"] <= 0:
         return {
             "ok": False,
-            "asset": asset["name"],
-            "timeframe": timeframe,
+            "asset": asset,
             "error": "Could not fetch live data"
         }
-    
-    message = generate_mentor_message(asset["name"], data, timeframe)
-    chart_result = get_chart_image_result(asset["name"], timeframe)
-    chart_ok = chart_result["ok"]
-    
-    if send_mode == "preview":
-        return {
-            "ok": True,
-            "asset": asset["name"],
-            "timeframe": timeframe,
-            "price": data["price"],
-            "message": message,
-            "chart_available": chart_ok
-        }
-    
-    elif send_mode == "saved":
-        if not chart_ok:
-            return {"ok": False, "asset": asset["name"], "timeframe": timeframe, "error": "Chart failed"}
+
+    message = generate_market_message(asset["name"], data, asset["interval"])
+    chart_result = get_chart_image_result(asset["name"], asset["interval"])
+
+    chart_status = "available" if chart_result["ok"] else "not available"
+    chart_error = chart_result["error"]
+
+    if send_mode == "saved":
+        if not chart_result["ok"]:
+            return {
+                "ok": False,
+                "asset": asset,
+                "error": "Chart failed"
+            }
+
         sent = await send_to_saved_messages(message, chart_image=chart_result["image"])
-        return {"ok": bool(sent), "asset": asset["name"], "timeframe": timeframe, "sent_to": "saved_messages" if sent else "failed"}
-    
-    elif send_mode == "vantage":
+
+        return {
+            "ok": bool(sent),
+            "asset": asset["name"],
+            "timeframe": asset["interval"],
+            "sent": "saved_messages" if sent else "failed"
+        }
+
+    if send_mode == "vantage":
         if not ENABLE_GROUP_SEND:
-            return {"ok": False, "asset": asset["name"], "error": "ENABLE_GROUP_SEND is false"}
-        if not chart_ok:
-            return {"ok": False, "asset": asset["name"], "timeframe": timeframe, "error": "Chart failed"}
+            return {
+                "ok": False,
+                "asset": asset,
+                "error": "ENABLE_GROUP_SEND is false"
+            }
+
+        if not chart_result["ok"]:
+            return {
+                "ok": False,
+                "asset": asset,
+                "error": f"Chart failed: {chart_error}"
+            }
+
         sent = await send_to_vantage(message, chart_image=chart_result["image"])
-        return {"ok": bool(sent), "asset": asset["name"], "timeframe": timeframe, "sent_to": "vantage_group" if sent else "failed"}
+        last_chart_sent_at = time.time()
+
+        return {
+            "ok": bool(sent),
+            "asset": asset["name"],
+            "timeframe": asset["interval"],
+            "sent": "vantage" if sent else "failed"
+        }
+
+    return {
+        "ok": True,
+        "asset": asset["name"],
+        "timeframe": asset["interval"],
+        "message": message,
+        "chart_available": chart_status
+    }
 
 
 async def broadcast_loop():
-    global broadcaster_running, last_sent_at
-    
+    global broadcaster_running
+
     if not ENABLE_GROUP_SEND:
-        logger.warning("Broadcaster blocked - ENABLE_GROUP_SEND is false")
+        logger.warning("Broadcaster blocked because ENABLE_GROUP_SEND is false")
         broadcaster_running = False
         return
-    
-    logger.info("Mentor broadcaster started - 25 minute intervals")
-    
+
+    logger.info("Broadcaster started - 25 minute intervals")
+
     while broadcaster_running:
         try:
             result = await create_market_update(send_mode="vantage")
             logger.info(f"Broadcast result: {result}")
-            last_sent_at = time.time()
+
             wait_seconds = BROADCAST_INTERVAL_MINUTES * 60
-            logger.info(f"Next update in {BROADCAST_INTERVAL_MINUTES} minutes")
+            logger.info(f"Next message in {BROADCAST_INTERVAL_MINUTES} minutes")
             
             for _ in range(wait_seconds):
                 if not broadcaster_running:
                     break
                 await asyncio.sleep(1)
+
         except Exception as e:
             logger.error(f"Broadcaster error: {e}")
             await asyncio.sleep(60)
-    
+
     logger.info("Broadcaster stopped")
 
 
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({
-        "status": "Mentor Market Broadcaster running",
+        "status": "Mentor Broadcaster running",
         "logged_in": SESSION_STRING != "",
         "broadcaster": "running" if broadcaster_running else "stopped",
         "assets": "Gold (70%) + Bitcoin (30%)",
         "timeframes": "Random (1m, 5m, 15m, 30m, 1h, 4h)",
-        "format": "2 ticks with chart image",
+        "format": "2 ticks with chart",
         "interval_minutes": 25,
         "group_send_enabled": ENABLE_GROUP_SEND,
-        "style": "Human mentor tone - educational, varied wording",
-        "safe_preview": "/preview_analysis",
-        "safe_test_saved": "/send_saved_test",
-        "send_once_to_group": "/send_vantage_once",
-        "start_auto": "/start_broadcaster",
-        "stop_auto": "/stop_broadcaster"
+        "vantage_group": VANTAGE_GROUP_ID,
+        "topic_id": VANTAGE_TOPIC_ID,
     })
 
 
 @app.route("/preview_analysis", methods=["GET"])
 def preview_analysis():
     future = asyncio.run_coroutine_threadsafe(create_market_update(send_mode="preview"), loop)
+
     try:
         result = future.result(timeout=30)
         return jsonify(result)
@@ -658,8 +747,9 @@ def preview_analysis():
 @app.route("/send_saved_test", methods=["GET"])
 def send_saved_test():
     future = asyncio.run_coroutine_threadsafe(create_market_update(send_mode="saved"), loop)
+
     try:
-        result = future.result(timeout=90)
+        result = future.result(timeout=100)
         status_code = 200 if result.get("ok") else 403
         return jsonify(result), status_code
     except Exception as e:
@@ -669,8 +759,9 @@ def send_saved_test():
 @app.route("/send_vantage_once", methods=["GET"])
 def send_vantage_once():
     future = asyncio.run_coroutine_threadsafe(create_market_update(send_mode="vantage"), loop)
+
     try:
-        result = future.result(timeout=90)
+        result = future.result(timeout=100)
         status_code = 200 if result.get("ok") else 403
         return jsonify(result), status_code
     except Exception as e:
@@ -680,15 +771,17 @@ def send_vantage_once():
 @app.route("/start_broadcaster", methods=["GET"])
 def start_broadcaster():
     global broadcaster_running
-    
+
     with broadcaster_start_lock:
         if broadcaster_running:
             return jsonify({"status": "Already running"})
+
         if not ENABLE_GROUP_SEND:
             return jsonify({"status": "blocked", "reason": "ENABLE_GROUP_SEND is false"}), 403
+
         broadcaster_running = True
         asyncio.run_coroutine_threadsafe(broadcast_loop(), loop)
-    
+
     return jsonify({"status": "Broadcaster started"})
 
 
@@ -702,16 +795,16 @@ def stop_broadcaster():
 @app.route("/send_code", methods=["GET"])
 def send_code():
     global phone_code_hash, client
-    
+
     async def _send():
         global phone_code_hash
         result = await client.send_code_request(PHONE)
         phone_code_hash = result.phone_code_hash
-    
+
     try:
         future = asyncio.run_coroutine_threadsafe(_send(), loop)
         future.result(timeout=15)
-        return jsonify({"status": "Code sent to phone", "next": "/verify?code=XXXXX"})
+        return jsonify({"status": "Code sent", "next": "/verify?code=XXXXX"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -719,15 +812,16 @@ def send_code():
 @app.route("/verify", methods=["GET"])
 def verify():
     global phone_code_hash, client
-    
+
     code = request.args.get("code", "")
+
     if not code:
         return jsonify({"error": "Provide ?code=XXXXX"}), 400
-    
+
     async def _verify():
         await client.sign_in(PHONE, code, phone_code_hash=phone_code_hash)
         return client.session.save()
-    
+
     try:
         future = asyncio.run_coroutine_threadsafe(_verify(), loop)
         session_string = future.result(timeout=15)
@@ -738,22 +832,24 @@ def verify():
 
 def start_broadcaster_on_boot():
     global broadcaster_running
-    
+
     if not AUTO_START_BROADCASTER:
         logger.info("Auto start disabled")
         return
+
     if not ENABLE_GROUP_SEND:
         logger.warning("Auto start blocked")
         return
-    
+
     time.sleep(10)
-    
+
     with broadcaster_start_lock:
         if broadcaster_running:
             return
+
         broadcaster_running = True
         asyncio.run_coroutine_threadsafe(broadcast_loop(), loop)
-    
+
     logger.info("Broadcaster auto-started")
 
 

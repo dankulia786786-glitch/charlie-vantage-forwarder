@@ -7,6 +7,8 @@ import time
 import requests
 import io
 import statistics
+from datetime import datetime
+from pytz import timezone as pytz_timezone
 from flask import Flask, request, jsonify, Response, has_request_context
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -29,6 +31,7 @@ VANTAGE_TOPIC_ID = int(os.environ.get("VANTAGE_TOPIC_ID", "0"))
 
 AUTO_START_BROADCASTER = os.environ.get("AUTO_START_BROADCASTER", "false").lower() == "true"
 ENABLE_GROUP_SEND = os.environ.get("ENABLE_GROUP_SEND", "false").lower() == "true"
+BROADCAST_INTERVAL_MINUTES = int(os.environ.get("BROADCAST_INTERVAL_MINUTES", "40"))
 
 client = None
 loop = asyncio.new_event_loop()
@@ -37,8 +40,6 @@ phone_code_hash = None
 broadcaster_running = False
 broadcaster_start_lock = threading.Lock()
 last_chart_sent_at = 0.0
-
-BROADCAST_INTERVAL_MINUTES = 25
 
 
 def run_loop():
@@ -156,6 +157,29 @@ def get_support_resistance(values, window=20):
     support = min(recent)
     resistance = max(recent)
     return {"support": support, "resistance": resistance}
+
+
+def is_gold_market_closed():
+    """Check if Gold market is closed (Friday 10pm - Sunday 11pm UK time)"""
+    uk_tz = pytz_timezone('Europe/London')
+    now_uk = datetime.now(uk_tz)
+    
+    weekday = now_uk.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+    hour = now_uk.hour
+    
+    # Friday 10pm onwards
+    if weekday == 4 and hour >= 22:
+        return True
+    
+    # Saturday (all day)
+    if weekday == 5:
+        return True
+    
+    # Sunday until 11pm
+    if weekday == 6 and hour < 23:
+        return True
+    
+    return False
 
 
 def yahoo_symbol(symbol):
@@ -519,6 +543,28 @@ def should_mention_support(price, support, resistance):
     return diff_support < diff_resistance
 
 
+def generate_predictive_gold_message(data, interval):
+    """Generate predictive Gold message when market is closed - SAME 2-LINE FORMAT"""
+    last_close = data["price"]
+    rsi = data["rsi"]
+    support = data["support"]
+    resistance = data["resistance"]
+    
+    predictions = [
+        f"✅ Gold expected to spike {level_format('gold', last_close + 25)}-{level_format('gold', last_close + 45)} on Sunday open ➡️ MACD ready to cross\n✅ RSI oversold at {int(rsi)}, watch volume explosion. Could see 50-100 point move.",
+        
+        f"✅ Gold likely gap-fill toward {level_format('gold', resistance)} when market opens ➡️ RSI at {int(rsi)} bullish setup\n✅ Support at {level_format('gold', support)} is key. If it breaks, target {level_format('gold', support - 30)}.",
+        
+        f"✅ Gold could spike {level_format('gold', last_close + 30)} on London open ➡️ EMA structure bullish, volume should explode\n✅ Watch Bollinger Band expansion. First hour could see 80-120 point swings.",
+        
+        f"✅ Gold watching resistance at {level_format('gold', resistance)} on open ➡️ Support at {level_format('gold', support)} is the floor\n✅ Volume spike expected. If gaps above resistance, next target {level_format('gold', resistance + 50)}.",
+        
+        f"✅ Gold technical setup suggests {level_format('gold', last_close + 35)} target when market opens ➡️ EMA50 bullish alignment\n✅ Gap-fill likely in first 30 mins. RSI spike incoming, stay alert for quick swings.",
+    ]
+    
+    return f"🚨 Trade Alert Everyone\n\n{random.choice(predictions)}"
+
+
 def generate_market_message(asset_name, data, interval):
     name = display_asset(asset_name)
     price_phrase = get_price_phrasing(asset_name, data["price"])
@@ -544,12 +590,26 @@ def generate_market_message(asset_name, data, interval):
 
 
 def choose_asset():
-    """70% Gold, 30% Bitcoin"""
+    """70% Gold, 30% Bitcoin. If Gold market closed, only return Bitcoin"""
     rand = random.random()
+    
     if rand < 0.7:
-        return {"symbol": "XAU/USD", "name": "gold", "interval": random.choice(["1min", "5min", "15min", "30min", "1h", "4h"])}
+        # Trying to pick Gold
+        if is_gold_market_closed():
+            # Gold market closed, pick Bitcoin instead (send Gold as predictive, Bitcoin as live)
+            rand_again = random.random()
+            if rand_again < 0.5:
+                # Send Gold predictive
+                return {"symbol": "XAU/USD", "name": "gold", "interval": random.choice(["1h", "4h"]), "is_predictive": True}
+            else:
+                # Send Bitcoin live
+                return {"symbol": "BTC/USD", "name": "bitcoin", "interval": random.choice(["1min", "5min", "15min", "30min", "1h", "4h"]), "is_predictive": False}
+        else:
+            # Gold market open, normal Gold
+            return {"symbol": "XAU/USD", "name": "gold", "interval": random.choice(["1min", "5min", "15min", "30min", "1h", "4h"]), "is_predictive": False}
     else:
-        return {"symbol": "BTC/USD", "name": "bitcoin", "interval": random.choice(["1min", "5min", "15min", "30min", "1h", "4h"])}
+        # Bitcoin (always live, 24/7)
+        return {"symbol": "BTC/USD", "name": "bitcoin", "interval": random.choice(["1min", "5min", "15min", "30min", "1h", "4h"]), "is_predictive": False}
 
 
 async def send_message_to_entity(entity_target, message_text, chart_image=None, reply_to=None):
@@ -621,6 +681,8 @@ async def create_market_update(send_mode="preview"):
     global last_chart_sent_at
 
     asset = choose_asset()
+    is_predictive = asset.get("is_predictive", False)
+    
     data = get_live_data(asset["symbol"], asset["interval"])
 
     if not data or data["price"] <= 0:
@@ -630,6 +692,23 @@ async def create_market_update(send_mode="preview"):
             "error": "Could not fetch live data"
         }
 
+    # If predictive (Gold market closed), don't need chart
+    if is_predictive:
+        message = generate_predictive_gold_message(data, asset["interval"])
+        return {
+            "ok": True,
+            "asset": asset["name"],
+            "timeframe": asset["interval"],
+            "message": message,
+            "type": "predictive"
+        } if send_mode == "preview" else {
+            "ok": True,
+            "asset": asset["name"],
+            "timeframe": asset["interval"],
+            "sent": "vantage"
+        }
+    
+    # Normal live message with chart
     message = generate_market_message(asset["name"], data, asset["interval"])
     chart_result = get_chart_image_result(asset["name"], asset["interval"])
 
@@ -695,7 +774,7 @@ async def broadcast_loop():
         broadcaster_running = False
         return
 
-    logger.info("Broadcaster started - 25 minute intervals")
+    logger.info(f"Broadcaster started - {BROADCAST_INTERVAL_MINUTES} minute intervals")
 
     while broadcaster_running:
         try:
@@ -724,9 +803,10 @@ def health():
         "logged_in": SESSION_STRING != "",
         "broadcaster": "running" if broadcaster_running else "stopped",
         "assets": "Gold (70%) + Bitcoin (30%)",
+        "gold_market_closed": is_gold_market_closed(),
         "timeframes": "Random (1m, 5m, 15m, 30m, 1h, 4h)",
         "format": "2 ticks with chart",
-        "interval_minutes": 25,
+        "interval_minutes": BROADCAST_INTERVAL_MINUTES,
         "group_send_enabled": ENABLE_GROUP_SEND,
         "vantage_group": VANTAGE_GROUP_ID,
         "topic_id": VANTAGE_TOPIC_ID,

@@ -8,7 +8,7 @@ import requests
 import io
 import statistics
 from datetime import datetime
-from pytz import timezone as pytz_timezone
+from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify, Response, has_request_context
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -161,7 +161,7 @@ def get_support_resistance(values, window=20):
 
 def is_gold_market_closed():
     """Check if Gold market is closed (Friday 10pm - Sunday 11pm UK time)"""
-    uk_tz = pytz_timezone('Europe/London')
+    uk_tz = ZoneInfo('Europe/London')
     now_uk = datetime.now(uk_tz)
     
     weekday = now_uk.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun

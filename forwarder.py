@@ -453,27 +453,43 @@ def should_mention_support(price, support, resistance):
     return diff_support < diff_resistance
 
 
+def get_price_phrasing(asset_name, price):
+    """Varied vocabulary for price - not repetitive"""
+    phrasings = [
+        f"trading near {price_format(asset_name, price)}",
+        f"sitting at {price_format(asset_name, price)}",
+        f"hovering around {price_format(asset_name, price)}",
+        f"at {price_format(asset_name, price)}",
+        f"currently at {price_format(asset_name, price)}",
+        f"moved to {price_format(asset_name, price)}",
+        f"near {price_format(asset_name, price)}",
+        f"around {price_format(asset_name, price)}",
+    ]
+    return random.choice(phrasings)
+
+
 def generate_message_type_a(asset_name, price, timeframe, support, resistance):
     """Type A: Support/Resistance focus - price testing key level"""
     name = display_asset(asset_name)
+    price_phrase = get_price_phrasing(asset_name, price)
     
     if should_mention_support(price, support, resistance):
         # Talking about support
         messages = [
-            f"✅ {name} is at {price_format(asset_name, price)} on the {timeframe} ➡️ Support holding at {level_format(asset_name, support)} — that's your key level\n✅ If it breaks below, sellers are in control. Watch that {level_format(asset_name, support)} closely.",
+            f"✅ {name} is {price_phrase} on the {timeframe} ➡️ Support holding at {level_format(asset_name, support)} — that's your key level\n✅ If it breaks below, sellers are in control. Watch that {level_format(asset_name, support)} closely.",
             
-            f"✅ {name} sitting at {price_format(asset_name, price)} on {timeframe} ➡️ Support is at {level_format(asset_name, support)} and it's the floor\n✅ A close below that level changes the picture. Stay alert to that break.",
+            f"✅ {name} {price_phrase} on {timeframe} ➡️ Support is at {level_format(asset_name, support)} and it's the floor\n✅ A close below that level changes the picture. Stay alert to that break.",
             
-            f"✅ Price is {price_format(asset_name, price)} on the {timeframe} ➡️ Support around {level_format(asset_name, support)} is holding the line\n✅ Watch how {name} reacts here. If it holds, upside could continue.",
+            f"✅ Price is {price_phrase} on the {timeframe} ➡️ Support around {level_format(asset_name, support)} is holding the line\n✅ Watch how {name} reacts here. If it holds, upside could continue.",
         ]
     else:
         # Talking about resistance
         messages = [
-            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Resistance is just above at {level_format(asset_name, resistance)}\n✅ If it breaks that level, next target is in play. Watch for the break.",
+            f"✅ {name} {price_phrase} on the {timeframe} ➡️ Resistance is just above at {level_format(asset_name, resistance)}\n✅ If it breaks that level, next target is in play. Watch for the break.",
             
-            f"✅ {name} is trading {price_format(asset_name, price)} on {timeframe} ➡️ Resistance at {level_format(asset_name, resistance)} is the hurdle\n✅ Buyers need to push through there. If they do, it's significant.",
+            f"✅ {name} is {price_phrase} on {timeframe} ➡️ Resistance at {level_format(asset_name, resistance)} is the hurdle\n✅ Buyers need to push through there. If they do, it's significant.",
             
-            f"✅ Current level is {price_format(asset_name, price)} on the {timeframe} ➡️ {name} facing resistance at {level_format(asset_name, resistance)}\n✅ Watch if it breaks or bounces. That tells us the next move.",
+            f"✅ Currently {price_phrase} on the {timeframe} ➡️ {name} facing resistance at {level_format(asset_name, resistance)}\n✅ Watch if it breaks or bounces. That tells us the next move.",
         ]
     
     return random.choice(messages)
@@ -482,79 +498,35 @@ def generate_message_type_a(asset_name, price, timeframe, support, resistance):
 def generate_message_type_b(asset_name, price, timeframe, rsi, support, resistance):
     """Type B: RSI/Momentum focus"""
     name = display_asset(asset_name)
+    price_phrase = get_price_phrasing(asset_name, price)
     
     if rsi >= 65:
         messages = [
-            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ RSI is strong at {int(rsi)}, buyers in control\n✅ Watch for pullbacks to {level_format(asset_name, support)} — that's where we'd want to see buyers step back in.",
+            f"✅ {name} {price_phrase} on the {timeframe} ➡️ RSI is strong at {int(rsi)}, buyers in control\n✅ Watch for pullbacks to {level_format(asset_name, support)} — that's where we'd want to see buyers step back in.",
             
-            f"✅ Price is {price_format(asset_name, price)} on {timeframe} ➡️ Momentum is high at RSI {int(rsi)}\n✅ This could continue, but watch resistance at {level_format(asset_name, resistance)}. That's where it could get contested.",
+            f"✅ Price {price_phrase} on {timeframe} ➡️ Momentum is high at RSI {int(rsi)}\n✅ This could continue, but watch resistance at {level_format(asset_name, resistance)}. That's where it could get contested.",
         ]
     elif rsi <= 40:
         messages = [
-            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ RSI at {int(rsi)} shows selling pressure\n✅ Support at {level_format(asset_name, support)} matters here. If it holds, we could see a bounce.",
+            f"✅ {name} is {price_phrase} on the {timeframe} ➡️ RSI at {int(rsi)} shows selling pressure\n✅ Support at {level_format(asset_name, support)} matters here. If it holds, we could see a bounce.",
             
-            f"✅ Price sitting at {price_format(asset_name, price)} on {timeframe} ➡️ RSI is {int(rsi)}, which means weakness\n✅ Watch that support level at {level_format(asset_name, support)}. A break would signal more downside.",
+            f"✅ Price {price_phrase} on {timeframe} ➡️ RSI is {int(rsi)}, which means weakness\n✅ Watch that support level at {level_format(asset_name, support)}. A break would signal more downside.",
         ]
     else:
         messages = [
-            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ RSI is neutral at {int(rsi)}\n✅ No clear momentum yet. Next move from support at {level_format(asset_name, support)} or resistance at {level_format(asset_name, resistance)} will tell us.",
+            f"✅ {name} {price_phrase} on the {timeframe} ➡️ RSI is neutral at {int(rsi)}\n✅ No clear momentum yet. Next move from support at {level_format(asset_name, support)} or resistance at {level_format(asset_name, resistance)} will tell us.",
             
-            f"✅ {name} trading {price_format(asset_name, price)} on {timeframe} ➡️ Momentum is balanced, RSI at {int(rsi)}\n✅ Price could test either side. Watch both {level_format(asset_name, support)} and {level_format(asset_name, resistance)}.",
+            f"✅ {name} {price_phrase} on {timeframe} ➡️ Momentum is balanced, RSI at {int(rsi)}\n✅ Price could test either side. Watch both {level_format(asset_name, support)} and {level_format(asset_name, resistance)}.",
         ]
     
     return random.choice(messages)
 
 
-def generate_message_type_c(asset_name, price, timeframe, ema50, ema200, support):
-    """Type C: Trend/Structure focus"""
-    name = display_asset(asset_name)
-    
-    if price > ema50 > ema200:
-        messages = [
-            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ Price above both moving averages — bullish setup\n✅ The trend is up. Only break back below the EMAs would change that.",
-            
-            f"✅ Price {price_format(asset_name, price)} on {timeframe} ➡️ Structure is bullish, price above the 50 and 200\n✅ Dips to {level_format(asset_name, support)} would be buying opportunities.",
-        ]
-    elif price < ema50 < ema200:
-        messages = [
-            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Price below both EMAs — bearish structure\n✅ The trend is down. Watch that support at {level_format(asset_name, support)} closely.",
-            
-            f"✅ Trading {price_format(asset_name, price)} on {timeframe} ➡️ Price below moving averages, structure is bearish\n✅ Weakness is the story here. Support at {level_format(asset_name, support)} is key to watch.",
-        ]
-    else:
-        messages = [
-            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ Structure is mixed, in between the EMAs\n✅ Waiting for a clean break. If it takes support at {level_format(asset_name, support)}, we have clarity.",
-            
-            f"✅ Price at {price_format(asset_name, price)} on {timeframe} ➡️ No clear direction from the moving averages yet\n✅ Watch how it reacts to {level_format(asset_name, support)}. That will tell us the next move.",
-        ]
-    
-    return random.choice(messages)
 
 
-def generate_message_type_d(asset_name, price, timeframe, bb_upper, bb_lower, support, resistance):
-    """Type D: Volatility/Range focus"""
-    name = display_asset(asset_name)
-    
-    if price >= bb_upper * 0.98:
-        messages = [
-            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Touching the upper band, price is hot\n✅ Watch for pullbacks. Support at {level_format(asset_name, support)} is where pullbacks matter.",
-            
-            f"✅ Price {price_format(asset_name, price)} on {timeframe} ➡️ Upper Bollinger Band is being tested\n✅ Could reject here or break through. That resistance at {level_format(asset_name, resistance)} is important.",
-        ]
-    elif price <= bb_lower * 1.02:
-        messages = [
-            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ Lower band territory, volatility is extended\n✅ Bounces from here can be sharp. Watch resistance at {level_format(asset_name, resistance)} for the pullback target.",
-            
-            f"✅ Trading {price_format(asset_name, price)} on {timeframe} ➡️ At the lower Bollinger Band\n✅ This is usually a bounce zone. Support at {level_format(asset_name, support)} is where the base is.",
-        ]
-    else:
-        messages = [
-            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Normal range, between the bands\n✅ Room to move in either direction. Support at {level_format(asset_name, support)}, resistance at {level_format(asset_name, resistance)}.",
-            
-            f"✅ Price {price_format(asset_name, price)} on {timeframe} ➡️ Comfortable range, volatility is steady\n✅ Watch the key levels. {level_format(asset_name, support)} is support, {level_format(asset_name, resistance)} is resistance.",
-        ]
-    
-    return random.choice(messages)
+
+
+
 
 
 def generate_mentor_message(asset_name, data, interval):

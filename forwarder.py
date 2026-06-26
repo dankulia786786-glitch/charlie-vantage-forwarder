@@ -418,138 +418,149 @@ def choose_timeframe():
 
 # ==================== MESSAGE GENERATION ====================
 
-def rsi_interpretation(rsi, asset_name):
-    """Natural RSI explanations - varied"""
-    interpretations = []
+def determine_market_bias(price, ema50, ema200, rsi, support, resistance):
+    """Determine if market is bullish, bearish, or neutral"""
+    bullish_count = 0
+    bearish_count = 0
     
-    if rsi >= 70:
-        interpretations = [
-            f"RSI is printing above 70 here, so watch for potential pullbacks on {asset_name}.",
-            f"Notice the RSI sitting in overbought territory. That usually means the move could be getting tired.",
-            f"With RSI that high, {asset_name} might need a breather soon.",
-        ]
-    elif rsi >= 60:
-        interpretations = [
-            f"RSI is strong but not stretched yet. {asset_name} still has room to move.",
-            f"The momentum here is solid without being overbought. That's what we like to see.",
-            f"RSI is showing conviction, but not panic-level extremes.",
-        ]
-    elif rsi >= 55:
-        interpretations = [
-            f"RSI is showing buyers still have control on {asset_name}.",
-            f"Momentum is leaning up, but it's not extreme.",
-            f"Price has some juice left in the tank here.",
-        ]
-    elif rsi >= 45:
-        interpretations = [
-            f"RSI is right in the middle, meaning {asset_name} is balanced.",
-            f"Neither side is pushing hard here. That usually means the next move is important.",
-            f"You see that RSI? Right in neutral territory.",
-        ]
-    elif rsi >= 35:
-        interpretations = [
-            f"RSI is showing sellers have pressure, but not panic levels yet.",
-            f"Downside momentum is there, but there's room before oversold.",
-            f"{asset_name} is weakening, but watch for bounces.",
-        ]
+    if price > ema50:
+        bullish_count += 1
     else:
-        interpretations = [
-            f"RSI is deep in oversold on the {asset_name} side. Bounces here can be sharp.",
-            f"When RSI drops this low, usually a counter-move comes in hard.",
-            f"{asset_name} is getting beat up. Just be careful of the bounce.",
-        ]
+        bearish_count += 1
     
-    return random.choice(interpretations)
+    if price > ema200:
+        bullish_count += 1
+    else:
+        bearish_count += 1
+    
+    if rsi > 55:
+        bullish_count += 1
+    elif rsi < 45:
+        bearish_count += 1
+    
+    if bullish_count > bearish_count:
+        return "bullish"
+    elif bearish_count > bullish_count:
+        return "bearish"
+    else:
+        return "neutral"
 
 
-def support_resistance_talk(asset_name, price, support, resistance, data):
-    """Natural support/resistance explanations"""
-    talks = []
-    
+def should_mention_support(price, support, resistance):
+    """Decide if support or resistance is more relevant"""
     diff_support = price - support
     diff_resistance = resistance - price
+    return diff_support < diff_resistance
+
+
+def generate_message_type_a(asset_name, price, timeframe, support, resistance):
+    """Type A: Support/Resistance focus - price testing key level"""
+    name = display_asset(asset_name)
     
-    if diff_support < diff_resistance:
-        talks = [
-            f"Support is sitting around {level_format(asset_name, support)}, not too far below. That's your safety net.",
-            f"Notice how {level_format(asset_name, support)} is the floor to watch on {asset_name}.",
-            f"If {asset_name} breaks that {level_format(asset_name, support)} level, we're looking at fresh weakness.",
-            f"Support at {level_format(asset_name, support)} is solid for now.",
+    if should_mention_support(price, support, resistance):
+        # Talking about support
+        messages = [
+            f"✅ {name} is at {price_format(asset_name, price)} on the {timeframe} ➡️ Support holding at {level_format(asset_name, support)} — that's your key level\n✅ If it breaks below, sellers are in control. Watch that {level_format(asset_name, support)} closely.",
+            
+            f"✅ {name} sitting at {price_format(asset_name, price)} on {timeframe} ➡️ Support is at {level_format(asset_name, support)} and it's the floor\n✅ A close below that level changes the picture. Stay alert to that break.",
+            
+            f"✅ Price is {price_format(asset_name, price)} on the {timeframe} ➡️ Support around {level_format(asset_name, support)} is holding the line\n✅ Watch how {name} reacts here. If it holds, upside could continue.",
         ]
     else:
-        talks = [
-            f"Resistance is up around {level_format(asset_name, resistance)}. That's where sellers are sitting.",
-            f"Look at {level_format(asset_name, resistance)} — that's your ceiling to watch.",
-            f"If {asset_name} gets there, expect some selling pressure.",
-            f"Resistance overhead at {level_format(asset_name, resistance)} is worth watching.",
+        # Talking about resistance
+        messages = [
+            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Resistance is just above at {level_format(asset_name, resistance)}\n✅ If it breaks that level, next target is in play. Watch for the break.",
+            
+            f"✅ {name} is trading {price_format(asset_name, price)} on {timeframe} ➡️ Resistance at {level_format(asset_name, resistance)} is the hurdle\n✅ Buyers need to push through there. If they do, it's significant.",
+            
+            f"✅ Current level is {price_format(asset_name, price)} on the {timeframe} ➡️ {name} facing resistance at {level_format(asset_name, resistance)}\n✅ Watch if it breaks or bounces. That tells us the next move.",
         ]
     
-    return random.choice(talks)
+    return random.choice(messages)
 
 
-def ema_talk(asset_name, price, ema50, ema200):
-    """Natural EMA explanations"""
-    talks = []
+def generate_message_type_b(asset_name, price, timeframe, rsi, support, resistance):
+    """Type B: RSI/Momentum focus"""
+    name = display_asset(asset_name)
+    
+    if rsi >= 65:
+        messages = [
+            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ RSI is strong at {int(rsi)}, buyers in control\n✅ Watch for pullbacks to {level_format(asset_name, support)} — that's where we'd want to see buyers step back in.",
+            
+            f"✅ Price is {price_format(asset_name, price)} on {timeframe} ➡️ Momentum is high at RSI {int(rsi)}\n✅ This could continue, but watch resistance at {level_format(asset_name, resistance)}. That's where it could get contested.",
+        ]
+    elif rsi <= 40:
+        messages = [
+            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ RSI at {int(rsi)} shows selling pressure\n✅ Support at {level_format(asset_name, support)} matters here. If it holds, we could see a bounce.",
+            
+            f"✅ Price sitting at {price_format(asset_name, price)} on {timeframe} ➡️ RSI is {int(rsi)}, which means weakness\n✅ Watch that support level at {level_format(asset_name, support)}. A break would signal more downside.",
+        ]
+    else:
+        messages = [
+            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ RSI is neutral at {int(rsi)}\n✅ No clear momentum yet. Next move from support at {level_format(asset_name, support)} or resistance at {level_format(asset_name, resistance)} will tell us.",
+            
+            f"✅ {name} trading {price_format(asset_name, price)} on {timeframe} ➡️ Momentum is balanced, RSI at {int(rsi)}\n✅ Price could test either side. Watch both {level_format(asset_name, support)} and {level_format(asset_name, resistance)}.",
+        ]
+    
+    return random.choice(messages)
+
+
+def generate_message_type_c(asset_name, price, timeframe, ema50, ema200, support):
+    """Type C: Trend/Structure focus"""
+    name = display_asset(asset_name)
     
     if price > ema50 > ema200:
-        talks = [
-            f"Price is above both the 50 and 200 moving averages. Structure is looking bullish on {asset_name}.",
-            f"Here's the thing — {asset_name} is trading above its key moving average levels. That's usually a good sign for upside.",
-            f"Notice how the moving averages are stacked correctly. That's bullish structure.",
-            f"With both EMAs below price, the trend is your friend on {asset_name}.",
+        messages = [
+            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ Price above both moving averages — bullish setup\n✅ The trend is up. Only break back below the EMAs would change that.",
+            
+            f"✅ Price {price_format(asset_name, price)} on {timeframe} ➡️ Structure is bullish, price above the 50 and 200\n✅ Dips to {level_format(asset_name, support)} would be buying opportunities.",
         ]
     elif price < ema50 < ema200:
-        talks = [
-            f"Price is below both the 50 and 200. That's a bearish setup on {asset_name}.",
-            f"See how everything is pointing down? The moving averages confirm weakness.",
-            f"{asset_name} is trading below its key levels. Downside structure is intact.",
-            f"When price is below the EMAs like this, it's a seller's game.",
+        messages = [
+            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Price below both EMAs — bearish structure\n✅ The trend is down. Watch that support at {level_format(asset_name, support)} closely.",
+            
+            f"✅ Trading {price_format(asset_name, price)} on {timeframe} ➡️ Price below moving averages, structure is bearish\n✅ Weakness is the story here. Support at {level_format(asset_name, support)} is key to watch.",
         ]
     else:
-        talks = [
-            f"The moving averages are mixed right now. {asset_name} is in a transition zone.",
-            f"Price is between the 50 and 200. Could go either way from here.",
-            f"It's a grey area on {asset_name} — no clear direction yet from the EMAs.",
-            f"Looks like {asset_name} is caught between two levels. Wait for the break.",
+        messages = [
+            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ Structure is mixed, in between the EMAs\n✅ Waiting for a clean break. If it takes support at {level_format(asset_name, support)}, we have clarity.",
+            
+            f"✅ Price at {price_format(asset_name, price)} on {timeframe} ➡️ No clear direction from the moving averages yet\n✅ Watch how it reacts to {level_format(asset_name, support)}. That will tell us the next move.",
         ]
     
-    return random.choice(talks)
+    return random.choice(messages)
 
 
-def bb_talk(asset_name, price, bb_upper, bb_lower, bb_middle):
-    """Natural Bollinger Bands explanations"""
-    talks = []
+def generate_message_type_d(asset_name, price, timeframe, bb_upper, bb_lower, support, resistance):
+    """Type D: Volatility/Range focus"""
+    name = display_asset(asset_name)
     
-    if price >= bb_upper * 0.99:
-        talks = [
-            f"Price is touching the upper Bollinger Band on {asset_name}. Watch for potential rejection here.",
-            f"See {asset_name} bumping the top band? That's usually where sellers step in.",
-            f"Upper band is being tested. Could be a spot to look for profit-taking.",
-            f"When price gets this hot on the bands, reversals can happen fast.",
+    if price >= bb_upper * 0.98:
+        messages = [
+            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Touching the upper band, price is hot\n✅ Watch for pullbacks. Support at {level_format(asset_name, support)} is where pullbacks matter.",
+            
+            f"✅ Price {price_format(asset_name, price)} on {timeframe} ➡️ Upper Bollinger Band is being tested\n✅ Could reject here or break through. That resistance at {level_format(asset_name, resistance)} is important.",
         ]
-    elif price <= bb_lower * 1.01:
-        talks = [
-            f"Lower Bollinger Band is being tested on {asset_name}. Bounces from here can be sharp.",
-            f"{asset_name} is touching the bottom band. That's historically a bounce zone.",
-            f"When price gets pushed down this far, usually buyers step in.",
-            f"Bottom band is in play. Be ready for the counter-move.",
+    elif price <= bb_lower * 1.02:
+        messages = [
+            f"✅ {name} is {price_format(asset_name, price)} on the {timeframe} ➡️ Lower band territory, volatility is extended\n✅ Bounces from here can be sharp. Watch resistance at {level_format(asset_name, resistance)} for the pullback target.",
+            
+            f"✅ Trading {price_format(asset_name, price)} on {timeframe} ➡️ At the lower Bollinger Band\n✅ This is usually a bounce zone. Support at {level_format(asset_name, support)} is where the base is.",
         ]
     else:
-        talks = [
-            f"Bollinger Bands show {asset_name} is in the middle of its range. Room to move in either direction.",
-            f"Price is comfortable within the bands right now. No extremes yet.",
-            f"{asset_name} has space before hitting either band. Normal conditions.",
-            f"Volatility is steady. Price is trading normally between the bands.",
+        messages = [
+            f"✅ {name} at {price_format(asset_name, price)} on the {timeframe} ➡️ Normal range, between the bands\n✅ Room to move in either direction. Support at {level_format(asset_name, support)}, resistance at {level_format(asset_name, resistance)}.",
+            
+            f"✅ Price {price_format(asset_name, price)} on {timeframe} ➡️ Comfortable range, volatility is steady\n✅ Watch the key levels. {level_format(asset_name, support)} is support, {level_format(asset_name, resistance)} is resistance.",
         ]
     
-    return random.choice(talks)
+    return random.choice(messages)
 
 
 def generate_mentor_message(asset_name, data, interval):
-    """Generate 2-tick human mentor message"""
+    """Generate context-aware message based on market conditions"""
     
     name = display_asset(asset_name)
-    timeframe = human_interval(interval)
     price = data["price"]
     rsi = data["rsi"]
     support = data["support"]
@@ -557,25 +568,23 @@ def generate_mentor_message(asset_name, data, interval):
     ema50 = data["ema50"]
     ema200 = data["ema200"]
     
-    # Tick 1: Price + Context
-    tick1_options = [
-        f"✅ {name} is trading around {price_format(asset_name, price)} on the {timeframe} chart right now.",
-        f"✅ Looking at {timeframe}, {name} is sitting at {price_format(asset_name, price)}.",
-        f"✅ Current price on {name} ({timeframe}) is {price_format(asset_name, price)} — here's what matters.",
-        f"✅ {name} is moving around {price_format(asset_name, price)} on this {timeframe} timeframe.",
-    ]
+    # Determine which message type makes most sense
+    bias = determine_market_bias(price, ema50, ema200, rsi, support, resistance)
     
-    # Tick 2: Analysis (RSI + Support/Resistance + EMA or Bollinger)
-    second_tick_parts = [
-        rsi_interpretation(rsi, asset_name),
-        support_resistance_talk(asset_name, price, support, resistance, data),
-        ema_talk(asset_name, price, ema50, ema200),
-        bb_talk(asset_name, price, data["bb_upper"], data["bb_lower"], data["bb_middle"]),
-    ]
+    # Pick a message type (rotate through A, B, C, D)
+    message_type = random.choice(["A", "B", "C", "D"])
     
-    tick2 = random.choice(second_tick_parts)
+    if message_type == "A":
+        content = generate_message_type_a(asset_name, price, interval, support, resistance)
+    elif message_type == "B":
+        content = generate_message_type_b(asset_name, price, interval, rsi, support, resistance)
+    elif message_type == "C":
+        content = generate_message_type_c(asset_name, price, interval, ema50, ema200, support)
+    else:  # D
+        content = generate_message_type_d(asset_name, price, interval, data["bb_upper"], data["bb_lower"], support, resistance)
     
-    message = f"{random.choice(tick1_options)}\n{tick2}"
+    # Format with siren and space
+    message = f"🚨 Trade Alert Everyone\n\n{content}"
     
     return message
 
